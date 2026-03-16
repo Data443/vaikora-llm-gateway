@@ -1,0 +1,104 @@
+# Data443 LLM Gateway - Docker Compose
+
+version: '3.8'
+
+services:
+  # Redis - L1/L2 Caching
+  redis:
+    image: redis:7-alpine
+    container_name: data443-gateway-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # PostgreSQL - Audit Logging
+  postgres:
+    image: postgres:15-alpine
+    container_name: data443-gateway-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: data443_audit
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # LLM Gateway
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: data443-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      # Server
+      HOST: "0.0.0.0"
+      PORT: 8000
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      # Cyren API
+      CYREN_IPREP_URL: ${CYREN_IPREP_URL:-https://try-now-ipreputation.data443.io/ctipd/iprep}
+      CYREN_URLF_URL: ${CYREN_URLF_URL:-https://try-now-urlcat.data443.io/ctwsd/websec}
+      CYREN_API_KEY: ${CYREN_API_KEY:-}
+      CYREN_TIMEOUT: 5.0
+      CYREN_RETRY_ATTEMPTS: 2
+
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_L1_TTL: 300
+      REDIS_L2_TTL: 3600
+
+      # PostgreSQL
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: data443_audit
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+
+      # Target LLM (OpenAI)
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-https://api.openai.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+
+      # Policy thresholds
+      ALLOW_THRESHOLD: 80
+      ALLOW_LOG_THRESHOLD: 50
+      CONSTRAIN_THRESHOLD: 20
+
+      # Circuit breaker
+      CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5
+      CIRCUIT_BREAKER_RECOVERY_TIMEOUT: 60
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
