@@ -168,7 +168,7 @@ class TestPolicyEngine:
         assert decision.decision in (Decision.ALLOW, Decision.ALLOW_LOG)
         assert decision.risk_score == 100
 
-    def test_is_request_allowed(self, policy_engine):
+    async def test_is_request_allowed(self, policy_engine):
         """Test ALLOW decision helper."""
         decision = PolicyDecision(Decision.ALLOW, risk_score=90)
         assert policy_engine.is_request_allowed(decision) is True
@@ -179,7 +179,7 @@ class TestPolicyEngine:
         decision = PolicyDecision(Decision.BLOCK, risk_score=10)
         assert policy_engine.is_request_allowed(decision) is False
 
-    def test_is_request_constrained(self, policy_engine):
+    async def test_is_request_constrained(self, policy_engine):
         """Test CONSTRAIN decision helper."""
         decision = PolicyDecision(Decision.CONSTRAIN, risk_score=30)
         assert policy_engine.is_request_constrained(decision) is True
@@ -187,7 +187,7 @@ class TestPolicyEngine:
         decision = PolicyDecision(Decision.ALLOW, risk_score=90)
         assert policy_engine.is_request_constrained(decision) is False
 
-    def test_is_request_blocked(self, policy_engine):
+    async def test_is_request_blocked(self, policy_engine):
         """Test BLOCK decision helper."""
         decision = PolicyDecision(Decision.BLOCK, risk_score=10)
         assert policy_engine.is_request_blocked(decision) is True
@@ -223,7 +223,7 @@ class TestCyrenClient:
         assert client._normalize_url("https://google.com") == "https://google.com"
         assert client._normalize_url("https://google.com/path") == "https://google.com/path"
 
-    def test_circuit_breaker_initial_state(self):
+    async def test_circuit_breaker_initial_state(self):
         """Test circuit breaker starts in closed state."""
         breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=60)
 
@@ -231,7 +231,7 @@ class TestCyrenClient:
         assert breaker.failure_count == 0
         assert breaker.allow_request() is True
 
-    def test_circuit_breaker_opens_after_threshold(self):
+    async def test_circuit_breaker_opens_after_threshold(self):
         """Test circuit breaker opens after failure threshold."""
         breaker = CircuitBreaker(failure_threshold=2, recovery_timeout=60)
 
@@ -419,6 +419,18 @@ class TestContentFilter:
         assert result["action"] == SecurityAction.BLOCK
         assert len(result["detected"]) > 0
         assert result["counts"]["total"] > 0
+
+    async def test_request_check_with_messages_payload(self, content_filter):
+        """Test request check with OpenAI-style messages payload."""
+        payload = {
+            "messages": [
+                {"role": "user", "content": "My SSN is 123-45-6789"}
+            ]
+        }
+        result = content_filter.check_request(payload)
+
+        assert result["action"] == SecurityAction.BLOCK
+        assert len(result["detected"]) > 0
 
     async def test_full_request_check_pass(self, content_filter):
         """Test full request check with safe content passes."""

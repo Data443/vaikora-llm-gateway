@@ -14,6 +14,7 @@ from loguru import logger
 
 from config.settings import settings
 from gateway.audit import audit_logger
+from gateway.cache import cache
 
 
 class CyrenResponse:
@@ -119,6 +120,20 @@ class CyrenClient:
             recovery_timeout=settings.circuit_breaker_recovery_timeout
         )
 
+    async def _get_cached_response(self, cache_key: str) -> Optional[CyrenResponse]:
+        cached = await cache.get(cache_key)
+        if cached:
+            if isinstance(cached, CyrenResponse):
+                return cached
+            try:
+                return CyrenResponse(str(cached))
+            except Exception:
+                return None
+        return None
+
+    async def _set_cached_response(self, cache_key: str, response_text: str) -> None:
+        await cache.set(cache_key, response_text)
+
     async def classify_ip(self, ip_address: str) -> Optional[CyrenResponse]:
         """
         Classify an IP address using Cyren IP Reputation API.
@@ -129,12 +144,18 @@ class CyrenClient:
         Returns:
             CyrenResponse with risk level (0-100), or None if failed
         """
-        if not self.circuit_breaker.allow_request():
-            logger.warning(f"Circuit breaker open, skipping IP check: {ip_address}")
-            return None
-
         if not self._validate_ip(ip_address):
             logger.warning(f"Invalid IP address: {ip_address}")
+            return None
+
+        cache_key = f"cyren:ip:{ip_address}"
+        cached = await self._get_cached_response(cache_key)
+        if cached:
+            logger.debug(f"Cyren IP cache HIT: {ip_address}")
+            return cached
+
+        if not self.circuit_breaker.allow_request():
+            logger.warning(f"Circuit breaker open, skipping IP check: {ip_address}")
             return None
 
         try:
@@ -153,6 +174,7 @@ x-ctch-ip: {ip_address}
 
                 if response.status_code == 200:
                     self.circuit_breaker.record_success()
+                    await self._set_cached_response(cache_key, response.text)
                     cyren_response = CyrenResponse(response.text)
 
                     logger.info(
@@ -185,14 +207,20 @@ x-ctch-ip: {ip_address}
         Returns:
             CyrenResponse with category ID, or None if failed
         """
-        if not self.circuit_breaker.allow_request():
-            logger.warning(f"Circuit breaker open, skipping URL check: {url}")
-            return None
-
         # Normalize URL
         normalized_url = self._normalize_url(url)
         if not normalized_url:
             logger.warning(f"Invalid URL: {url}")
+            return None
+
+        cache_key = f"cyren:url:{normalized_url}"
+        cached = await self._get_cached_response(cache_key)
+        if cached:
+            logger.debug(f"Cyren URL cache HIT: {normalized_url}")
+            return cached
+
+        if not self.circuit_breaker.allow_request():
+            logger.warning(f"Circuit breaker open, skipping URL check: {url}")
             return None
 
         try:
@@ -211,6 +239,7 @@ x-ctch-url: {normalized_url}
 
                 if response.status_code == 200:
                     self.circuit_breaker.record_success()
+                    await self._set_cached_response(cache_key, response.text)
                     cyren_response = CyrenResponse(response.text)
 
                     logger.info(

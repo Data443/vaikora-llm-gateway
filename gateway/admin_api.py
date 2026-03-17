@@ -34,7 +34,7 @@ _policies = {
     },
     "jwt_auth": {
         "enabled": False,  # Disabled by default
-        "secret": "",
+        "secret": settings.jwt_secret,
         "issuer": settings.jwt_issuer,
         "audience": settings.jwt_audience,
     },
@@ -49,7 +49,9 @@ class PolicyUpdate(BaseModel):
     action: Optional[str] = None
     severity_threshold: Optional[str] = None
     max_attempts: Optional[int] = None
-
+    secret: Optional[str] = None
+    issuer: Optional[str] = None
+    audience: Optional[str] = None
 
 class PolicyResponse(BaseModel):
     """Policy update response."""
@@ -57,13 +59,11 @@ class PolicyResponse(BaseModel):
     message: str
     policy: Optional[Dict[str, Any]] = None
 
-
 class PolicyListItem(BaseModel):
     """Policy item in list."""
     name: str
     enabled: bool
     config: Dict[str, Any]
-
 
 class PolicyListResponse(BaseModel):
     """List all policies response."""
@@ -211,6 +211,12 @@ async def update_jwt_policy(request: PolicyUpdate) -> PolicyResponse:
 
     if request.enabled is not None:
         current["enabled"] = request.enabled
+    if request.secret is not None:
+        current["secret"] = request.secret
+    if request.issuer is not None:
+        current["issuer"] = request.issuer
+    if request.audience is not None:
+        current["audience"] = request.audience
 
     logger.info(f"JWT policy updated: {current}")
     return PolicyResponse(
@@ -281,7 +287,7 @@ async def reset_policies() -> PolicyResponse:
         },
         "jwt_auth": {
             "enabled": False,
-            "secret": "",
+            "secret": settings.jwt_secret,
             "issuer": settings.jwt_issuer,
             "audience": settings.jwt_audience,
         },
@@ -296,5 +302,11 @@ async def reset_policies() -> PolicyResponse:
 
 
 def get_admin_router() -> APIRouter:
-    """Get the admin API router."""
+    """Get admin API router."""
     return admin_router
+
+
+def get_policy(name: str) -> Dict[str, Any]:
+    """Get a copy of a policy by name."""
+    policy = _policies.get(name)
+    return dict(policy) if policy else {}

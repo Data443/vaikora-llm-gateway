@@ -5,12 +5,14 @@ Detects PII (Personally Identifiable Information) and malicious prompt patterns.
 Includes PII pattern detection and known malicious prompt blocking.
 """
 
+import json
 import re
 from typing import List, Optional, Dict, Any
 from enum import Enum
 from loguru import logger
 
 from config.settings import settings
+from gateway.admin_api import get_policy
 
 
 class SecurityAction(str, Enum):
@@ -23,6 +25,12 @@ class SecurityAction(str, Enum):
 
 class ContentFilter:
     """Content security filter for PII and malicious patterns."""
+
+    _SEVERITY_RANK = {
+        "LOW": 1,
+        "MEDIUM": 2,
+        "HIGH": 3,
+    }
 
     # PII Patterns (compiled regex for performance)
     _SSN_PATTERN = re.compile(
@@ -100,6 +108,69 @@ class ContentFilter:
             re.compile(pattern, re.IGNORECASE | re.DOTALL)
             for pattern in self._INJECTION_PATTERNS
         ]
+
+    def _extract_text(self, content: Any) -> str:
+        """Extract text from common request/response payload shapes."""
+        if content is None:
+            return ""
+
+        if isinstance(content, bytes):
+            return content.decode("utf-8", errors="ignore")
+
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            parts = [self._extract_text(item) for item in content]
+            return "\n".join([p for p in parts if p])
+
+        if isinstance(content, dict):
+            parts = []
+
+            # Common request fields
+            for key in ("prompt", "input", "content", "text", "query"):
+                if key in content:
+                    parts.append(self._extract_text(content.get(key)))
+
+            # OpenAI chat format
+            messages = content.get("messages")
+            if isinstance(messages, list):
+                for msg in messages:
+                    parts.append(self._extract_text(msg))
+
+            # Response choices (OpenAI-style)
+            choices = content.get("choices")
+            if isinstance(choices, list):
+                for choice in choices:
+                    if isinstance(choice, dict):
+                        if "message" in choice:
+                            parts.append(self._extract_text(choice.get("message")))
+                        if "text" in choice:
+                            parts.append(self._extract_text(choice.get("text")))
+
+            if parts:
+                return "\n".join([p for p in parts if p])
+
+            try:
+                return json.dumps(content, ensure_ascii=True)
+            except Exception:
+                return str(content)
+
+        return str(content)
+
+    def _get_policy_config(self, name: str) -> Dict[str, Any]:
+        """Get policy config with defaults."""
+        policy = get_policy(name)
+        return {
+            "enabled": policy.get("enabled", True),
+            "action_on_detect": str(policy.get("action_on_detect", "BLOCK")).upper(),
+            "severity_threshold": str(policy.get("severity_threshold", "LOW")).upper(),
+        }
+
+    def _severity_meets_threshold(self, severity: str, threshold: str) -> bool:
+        sev_rank = self._SEVERITY_RANK.get(severity.upper(), 0)
+        thr_rank = self._SEVERITY_RANK.get(threshold.upper(), 1)
+        return sev_rank >= thr_rank
 
     def check_pii(self, text: str) -> List[Dict[str, Any]]:
         """
@@ -250,7 +321,7 @@ class ContentFilter:
 
         return detections
 
-    def check_request(self, content: Optional[str] = None) -> Dict[str, Any]:
+    def check_request(self, content: Optional[Any] = None) -> Dict[str, Any]:
         """
         Check request content for security issues.
 
@@ -260,21 +331,27 @@ class ContentFilter:
         Returns:
             Security analysis result
         """
-        if not content:
+        text = self._extract_text(content)
+
+        if not text:
             return {
                 "action": SecurityAction.PASS,
                 "detected": [],
                 "reason": "No content to analyze"
             }
 
+        pii_policy = self._get_policy_config("pii_detection")
+        jailbreak_policy = self._get_policy_config("jailbreak_detection")
+        injection_policy = self._get_policy_config("injection_detection")
+
         # Check for PII
-        pii_detections = self.check_pii(content)
+        pii_detections = self.check_pii(text) if pii_policy["enabled"] else []
 
         # Check for jailbreak attempts
-        jailbreak_detections = self.check_jailbreak_attempts(content)
+        jailbreak_detections = self.check_jailbreak_attempts(text) if jailbreak_policy["enabled"] else []
 
         # Check for injection attempts
-        injection_detections = self.check_injection_attempts(content)
+        injection_detections = self.check_injection_attempts(text) if injection_policy["enabled"] else []
 
         # Combine all detections
         all_detections = pii_detections + jailbreak_detections + injection_detections
@@ -286,8 +363,26 @@ class ContentFilter:
                 "reason": "No security issues detected"
             }
 
-        # Determine action based on severity
-        has_high_severity = any(d.get("severity") == "HIGH" for d in all_detections)
+        # Determine actions based on policies
+        actions = []
+        for detection in all_detections:
+            if detection["type"] == "JAILBREAK_ATTEMPT":
+                policy = jailbreak_policy
+            elif detection["type"] == "INJECTION_ATTEMPT":
+                policy = injection_policy
+            else:
+                policy = pii_policy
+
+            if not policy["enabled"]:
+                continue
+
+            if not self._severity_meets_threshold(detection.get("severity", "LOW"), policy["severity_threshold"]):
+                continue
+
+            action = policy["action_on_detect"]
+            if action not in SecurityAction._value2member_map_:
+                action = "BLOCK"
+            actions.append(action)
 
         # Count detections
         pii_count = len(pii_detections)
@@ -296,13 +391,20 @@ class ContentFilter:
         total_count = len(all_detections)
 
         # Determine action
-        if has_high_severity or jailbreak_count > 0:
+        if not actions:
+            return {
+                "action": SecurityAction.PASS,
+                "detected": [],
+                "reason": "No security issues detected"
+            }
+
+        if "BLOCK" in actions:
             action = SecurityAction.BLOCK
             reason = f"Block: {jailbreak_count} jailbreak, {injection_count} injection, {pii_count} PII detected"
-        elif total_count >= 3:
+        elif "CONSTRAIN" in actions:
             action = SecurityAction.CONSTRAIN
             reason = f"Constrain: {total_count} security issues detected"
-        elif total_count >= 1:
+        elif "LOG_ONLY" in actions:
             action = SecurityAction.LOG_ONLY
             reason = f"Log: {total_count} security issues detected"
         else:
@@ -321,11 +423,18 @@ class ContentFilter:
             }
         }
 
+    def check_response(self, content: Optional[Any] = None) -> Dict[str, Any]:
+        """Check response content for security issues."""
+        result = self.check_request(content)
+        if result.get("action") != SecurityAction.PASS:
+            result["reason"] = f"Response {result.get('reason', '')}".strip()
+        return result
+
 
 # Global content filter instance
 content_filter = ContentFilter()
 
 
 def get_content_filter() -> ContentFilter:
-    """Get the global content filter instance."""
+    """Get global content filter instance."""
     return content_filter

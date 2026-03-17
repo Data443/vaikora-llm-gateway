@@ -8,6 +8,7 @@ Supports configurable token issuer and secret.
 from typing import Optional
 from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security.utils import get_authorization_scheme_param
 from loguru import logger
 
 # python-jose is the JWT library
@@ -19,11 +20,16 @@ from config.settings import settings
 class JWTAuth:
     """JWT authentication handler."""
 
-    def __init__(self):
-        self.secret = settings.jwt_secret if settings.jwt_secret else "default-secret-key-change-in-production"
+    def __init__(
+        self,
+        secret: Optional[str] = None,
+        issuer: Optional[str] = None,
+        audience: Optional[str] = None,
+    ):
+        self.secret = secret or settings.jwt_secret or "default-secret-key-change-in-production"
         self.algorithm = "HS256"
-        self.issuer = settings.jwt_issuer
-        self.audience = settings.jwt_audience
+        self.issuer = issuer or settings.jwt_issuer
+        self.audience = audience or settings.jwt_audience
 
     def create_token(
         self,
@@ -159,6 +165,54 @@ async def get_current_user(
     return user_id
 
 
+async def get_current_user_from_request(
+    request: Request,
+    jwt_auth: JWTAuth = None,
+) -> Optional[str]:
+    """
+    Get current user from Authorization header in a Request.
+
+    Args:
+        request: FastAPI Request
+        jwt_auth: JWT authentication handler
+
+    Returns:
+        User ID from token, or raises HTTPException if invalid
+    """
+    if jwt_auth is None:
+        jwt_auth = JWTAuth()
+
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization", "")
+    scheme, token = get_authorization_scheme_param(auth_header)
+
+    credentials_error = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    if not scheme or scheme.lower() != "bearer" or not token:
+        raise credentials_error
+
+    payload = jwt_auth.verify_token(token)
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired JWT token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid JWT token: missing subject",
+        )
+
+    logger.debug(f"Authenticated user: {user_id}")
+    return user_id
+
+
 async def optional_auth(
     credentials: HTTPAuthorizationCredentials = HTTPBearer(),
     jwt_auth: JWTAuth = None
@@ -195,5 +249,5 @@ jwt_auth_handler = JWTAuth()
 
 
 def get_jwt_auth() -> JWTAuth:
-    """Get the global JWT auth handler instance."""
+    """Get global JWT auth handler instance."""
     return jwt_auth_handler

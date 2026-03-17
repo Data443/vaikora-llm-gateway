@@ -16,8 +16,9 @@ from loguru import logger
 from config.settings import settings
 from gateway.policy import PolicyEngine, PolicyDecision, Decision
 from gateway.cache import cache
-from gateway.jwt_auth import get_jwt_auth, optional_auth, get_current_user
+from gateway.jwt_auth import JWTAuth, get_current_user_from_request
 from gateway.content_filter import get_content_filter, SecurityAction
+from gateway.admin_api import get_policy
 
 
 class ProxyHandler:
@@ -40,11 +41,17 @@ class ProxyHandler:
         6. Log all decisions
         """
         # STEP 1: JWT Authentication (if enabled)
-        jwt_enabled = settings.jwt_enabled
+        jwt_policy = get_policy("jwt_auth")
+        jwt_enabled = jwt_policy.get("enabled", settings.jwt_enabled)
 
         if jwt_enabled:
             try:
-                user_id = await get_current_user(request)
+                jwt_auth = JWTAuth(
+                    secret=jwt_policy.get("secret") or settings.jwt_secret,
+                    issuer=jwt_policy.get("issuer") or settings.jwt_issuer,
+                    audience=jwt_policy.get("audience") or settings.jwt_audience,
+                )
+                user_id = await get_current_user_from_request(request, jwt_auth)
                 logger.info(f"Authenticated user: {user_id}")
             except HTTPException:
                 # Authentication failed - return 401
@@ -97,6 +104,8 @@ class ProxyHandler:
                 status_code=status.HTTP_403_FORBIDDEN,
                 media_type="application/json",
             )
+        if content_security["action"] in (SecurityAction.CONSTRAIN, SecurityAction.LOG_ONLY):
+            logger.warning(f"Request {request_id} flagged by content filter: {content_security['reason']}")
 
         # STEP 4: Evaluate policy
         decision = await self.policy_engine.evaluate_request(
@@ -120,7 +129,7 @@ class ProxyHandler:
             # For now, we'll allow but log heavily
             return await self._forward_request(request, request_id, constrained=True)
 
-        # ALLOW or ALLOW_LOG - forward the request
+        # ALLOW or ALLOW_LOG - forward request
         return await self._forward_request(request, request_id)
 
     async def _forward_request(
@@ -184,6 +193,38 @@ class ProxyHandler:
                     f"time={response_time_ms}ms"
                 )
 
+                # Optional response inspection (JSON only)
+                response_body = None
+                content_type = response.headers.get("content-type", "")
+                if "application/json" in content_type.lower():
+                    try:
+                        response_body = response.json()
+                    except Exception:
+                        response_body = None
+
+                if response_body is not None:
+                    response_security = get_content_filter().check_response(response_body)
+                    if response_security["action"] == SecurityAction.BLOCK:
+                        logger.warning(
+                            f"Response {request_id} BLOCKED by content filter: {response_security['reason']}"
+                        )
+                        return Response(
+                            content=json.dumps({
+                                "error": {
+                                    "message": f"Response blocked: {response_security['reason']}",
+                                    "type": "content_blocked",
+                                    "code": "policy_violation",
+                                    "detected": response_security.get("detected", []),
+                                }
+                            }),
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            media_type="application/json",
+                        )
+                    if response_security["action"] in (SecurityAction.CONSTRAIN, SecurityAction.LOG_ONLY):
+                        logger.warning(
+                            f"Response {request_id} flagged by content filter: {response_security['reason']}"
+                        )
+
                 # Return response
                 return Response(
                     content=response.content,
@@ -203,7 +244,7 @@ class ProxyHandler:
         Return block response.
 
         Args:
-            decision: Policy decision that caused the block
+            decision: Policy decision that caused block
 
         Returns:
             HTTP 403 Forbidden response
