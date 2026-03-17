@@ -1,12 +1,13 @@
 """
 Data443 LLM Gateway - Tests
 
-Basic tests for the gateway functionality.
+Basic tests for gateway functionality.
 """
 
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
 import json
+import asyncio
 
 from gateway.main import app
 from gateway.policy import PolicyDecision, Decision, PolicyEngine
@@ -126,7 +127,6 @@ class TestCyrenClient:
         assert client._validate_ip("8.8.8.8") is True
         assert client._validate_ip("192.168.1.1") is True
         assert client._validate_ip("10.0.0.1") is True
-
         assert client._validate_ip("256.0.0.1") is False
         assert client._validate_ip("invalid") is False
         assert client._validate_ip("") is False
@@ -147,10 +147,81 @@ class TestAPIEndpoints:
     async def test_health_endpoint(self):
         """Test health check endpoint."""
         from fastapi.testclient import TestClient
+        client = TestClient(app)
 
-        # Note: This requires proper async setup
-        # For full testing, use pytest-asyncio with proper lifespan management
-        pass
+        response = client.get("/health")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert "circuit_breaker" in data
+        assert "cache_connected" in data
+        assert "audit_connected" in data
+
+    async def test_root_endpoint(self):
+        """Test root endpoint."""
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+
+        response = client.get("/")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "name" in data
+        assert "version" in data
+        assert data["status"] == "operational"
+
+    async def test_admin_policies_list(self):
+        """Test admin policies list endpoint."""
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+
+        response = client.get("/admin/policies")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "policies" in data
+
+    async def test_admin_pii_policy_get(self):
+        """Test get PII policy endpoint."""
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+
+        response = client.get("/admin/policies/pii")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+    async def test_admin_jwt_policy_get(self):
+        """Test get JWT policy endpoint."""
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+
+        response = client.get("/admin/policies/jwt")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+    async def test_proxy_endpoint_forwards_request(self, mock_cyren_client):
+        """Test proxy forwards requests (will fail due to no LLM endpoint)."""
+        from fastapi.testclient import TestClient
+        client = TestClient(app)
+
+        # Mock Cyren to return high trust (ALLOW)
+        mock_response = Mock()
+        mock_response.risk_level = 95
+        mock_cyren_client.classify_ip.return_value = mock_response
+
+        # Create a test that will fail at forward (no LLM endpoint configured)
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "test"}]}
+        )
+
+        # Request should be accepted by policy but fail at forward (502/503)
+        assert response.status_code in [502, 503]
 
 
 if __name__ == "__main__":
