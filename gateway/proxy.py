@@ -44,7 +44,7 @@ class ProxyHandler:
 
         if jwt_enabled:
             try:
-                user_id = await get_current_user(request, jwt_auth)
+                user_id = await get_current_user(request)
                 logger.info(f"Authenticated user: {user_id}")
             except HTTPException:
                 # Authentication failed - return 401

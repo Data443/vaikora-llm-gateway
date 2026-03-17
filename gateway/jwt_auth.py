@@ -10,14 +10,8 @@ from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from loguru import logger
 
-# python-jose is the JWT library (jose provides jwt alias)
-# Using type: ignore to suppress Pylance warnings for jose module
-try:
-    from jose import jwt, JWTError
-except ImportError:
-    # Fallback to python-jose if jose is not available
-    from python_jose import jwt, JWTError
-    logger.info("Using python-jose library")
+# python-jose is the JWT library
+from jose import jwt, JWTError
 
 from config.settings import settings
 
