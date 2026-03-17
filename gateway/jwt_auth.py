@@ -26,10 +26,10 @@ class JWTAuth:
     """JWT authentication handler."""
 
     def __init__(self):
-        self.secret = settings.JWT_SECRET if settings.JWT_SECRET else "default-secret-key-change-in-production"
+        self.secret = settings.jwt_secret if settings.jwt_secret else "default-secret-key-change-in-production"
         self.algorithm = "HS256"
-        self.issuer = settings.JWT_ISSUER if settings.JWT_ISSUER else "data443-gateway"
-        self.audience = settings.JWT_AUDIENCE if settings.JWT_AUDIENCE else "data443-gateway"
+        self.issuer = settings.jwt_issuer
+        self.audience = settings.jwt_audience
 
     def create_token(
         self,

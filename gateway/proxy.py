@@ -16,7 +16,7 @@ from loguru import logger
 from config.settings import settings
 from gateway.policy import PolicyEngine, PolicyDecision, Decision
 from gateway.cache import cache
-from jwt_auth import get_jwt_auth, optional_auth, get_current_user
+from gateway.jwt_auth import get_jwt_auth, optional_auth, get_current_user
 from gateway.content_filter import get_content_filter, SecurityAction
 
 
@@ -40,8 +40,7 @@ class ProxyHandler:
         6. Log all decisions
         """
         # STEP 1: JWT Authentication (if enabled)
-        jwt_auth = get_jwt_auth()
-        jwt_enabled = jwt_auth.config.get("enabled", False)
+        jwt_enabled = settings.jwt_enabled
 
         if jwt_enabled:
             try:

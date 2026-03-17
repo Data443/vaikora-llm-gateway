@@ -86,6 +86,24 @@ class Settings(BaseSettings):
     )
     # BLOCK threshold is implicitly 0-19
 
+    # JWT Authentication
+    jwt_enabled: bool = Field(
+        default=False,
+        description="Enable JWT authentication"
+    )
+    jwt_secret: str = Field(
+        default="",
+        description="JWT secret key"
+    )
+    jwt_issuer: str = Field(
+        default="data443-gateway",
+        description="JWT issuer"
+    )
+    jwt_audience: str = Field(
+        default="data443-gateway",
+        description="JWT audience"
+    )
+
     # Circuit Breaker
     circuit_breaker_failure_threshold: int = Field(
         default=5,

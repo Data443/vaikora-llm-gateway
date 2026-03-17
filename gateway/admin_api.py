@@ -35,8 +35,8 @@ _policies = {
     "jwt_auth": {
         "enabled": False,  # Disabled by default
         "secret": "",
-        "issuer": settings.get("JWT_ISSUER", "data443-gateway"),
-        "audience": settings.get("JWT_AUDIENCE", "data443-gateway"),
+        "issuer": settings.jwt_issuer,
+        "audience": settings.jwt_audience,
     },
 }
 
@@ -282,8 +282,8 @@ async def reset_policies() -> PolicyResponse:
         "jwt_auth": {
             "enabled": False,
             "secret": "",
-            "issuer": settings.get("JWT_ISSUER", "data443-gateway"),
-            "audience": settings.get("JWT_AUDIENCE", "data443-gateway"),
+            "issuer": settings.jwt_issuer,
+            "audience": settings.jwt_audience,
         },
     }
 
