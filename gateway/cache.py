@@ -62,7 +62,8 @@ class L2Cache:
     async def connect(self) -> None:
         """Connect to Redis."""
         try:
-            self.redis = await redis.from_url(
+            # redis.from_url returns a client instance immediately; do not await it.
+            self.redis = redis.from_url(
                 f"redis://{settings.redis_host}:{settings.redis_port}/{settings.redis_db}",
                 password=settings.redis_password if settings.redis_password else None,
                 decode_responses=True,

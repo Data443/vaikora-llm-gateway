@@ -20,10 +20,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY config/ ./config/
 COPY gateway/ ./gateway/
-COPY tests/ ./tests/
 
 # Create __init__.py files for proper Python package structure
-RUN touch gateway/__init__.py config/__init__.py tests/__init__.py
+RUN touch gateway/__init__.py config/__init__.py
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
