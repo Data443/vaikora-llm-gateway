@@ -16,6 +16,8 @@ from loguru import logger
 from config.settings import settings
 from gateway.policy import PolicyEngine, PolicyDecision, Decision
 from gateway.cache import cache
+from jwt_auth import get_jwt_auth, optional_auth, get_current_user
+from gateway.content_filter import get_content_filter, SecurityAction
 
 
 class ProxyHandler:
@@ -30,12 +32,36 @@ class ProxyHandler:
         """
         Handle incoming LLM API request.
 
-        1. Extract request details (IP, URL, headers, body)
-        2. Evaluate policy using threat intelligence
-        3. Forward request if ALLOWED, return error if BLOCKED
-        4. Log all decisions
+        1. JWT Authentication (optional)
+        2. Extract request details (IP, URL, headers, body)
+        3. Content security filtering
+        4. Evaluate policy using threat intelligence
+        5. Forward request if ALLOWED, return error if BLOCKED
+        6. Log all decisions
         """
-        # Extract client information
+        # STEP 1: JWT Authentication (if enabled)
+        jwt_auth = get_jwt_auth()
+        jwt_enabled = jwt_auth.config.get("enabled", False)
+
+        if jwt_enabled:
+            try:
+                user_id = await get_current_user(request, jwt_auth)
+                logger.info(f"Authenticated user: {user_id}")
+            except HTTPException:
+                # Authentication failed - return 401
+                return Response(
+                    content=json.dumps({
+                        "error": {
+                            "message": "Authentication required",
+                            "type": "auth_required",
+                            "code": "unauthorized",
+                        }
+                    }),
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    media_type="application/json",
+                )
+
+        # STEP 2: Extract request details
         client_ip = self._get_client_ip(request)
         request_id = str(uuid.uuid4())
 
@@ -53,7 +79,27 @@ class ProxyHandler:
 
         logger.info(f"Request {request_id} from {client_ip}: {request.method} {request.url.path}")
 
-        # Evaluate policy
+        # STEP 3: Content security filtering
+        content_filter = get_content_filter()
+        content_security = content_filter.check_request(request_body)
+
+        # If content is BLOCKED, return immediately
+        if content_security["action"] == SecurityAction.BLOCK:
+            logger.warning(f"Request {request_id} BLOCKED by content filter: {content_security['reason']}")
+            return Response(
+                content=json.dumps({
+                    "error": {
+                        "message": f"Request blocked: {content_security['reason']}",
+                        "type": "content_blocked",
+                        "code": "policy_violation",
+                        "detected": content_security["detected"],
+                    }
+                }),
+                status_code=status.HTTP_403_FORBIDDEN,
+                media_type="application/json",
+            )
+
+        # STEP 4: Evaluate policy
         decision = await self.policy_engine.evaluate_request(
             ip_address=client_ip,
             url=request_url,

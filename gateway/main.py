@@ -31,6 +31,7 @@ from gateway.audit import audit_logger
 from gateway.cyren_client import cyren_client
 from gateway.policy import init_policy_engine
 from gateway.proxy import init_proxy_handler, ProxyHandler
+from gateway.admin_api import get_admin_router
 
 
 @asynccontextmanager
@@ -81,6 +82,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# Include admin API router
+admin_router = get_admin_router()
+app.include_router(admin_router)
 
 
 @app.get("/health")
