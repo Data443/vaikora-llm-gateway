@@ -7,6 +7,7 @@ Production-ready Phase 1 reverse-proxy security gateway for LLM endpoints. The g
 **Status**
 - Phase 1: Production-ready prototype complete
 - Test suite: 33 tests passing
+- End-to-end verification: OpenAI + Cyren IPRep/URLF confirmed
 
 ---
 
@@ -67,6 +68,8 @@ docker-compose up -d --build
 curl http://localhost:8000/health
 ```
 
+Note: Set `LLM_ENDPOINT` to `https://api.openai.com` (no `/v1`). For testing, set `LLM_API_KEY`. For pass-through keys, leave `LLM_API_KEY` empty and send `Authorization: Bearer <key>` from the client.
+
 ---
 
 **Health Check Response**
@@ -104,14 +107,18 @@ Run the Phase 1 test suite (33 tests):
 python -m pytest gateway/test/test_gateway.py -q
 ```
 
+Note: These tests are mocked and do not call OpenAI or Cyren.
+
 ---
 
-**Verification Scripts**
+**Verification (Real Calls)**
 
-- Linux/macOS: `documents/phase1_verify.sh`
-- PowerShell: `documents/phase1_verify.ps1`
+- End-to-end verification (Linux/macOS): `gateway/test/phase1_verify.sh`
+- End-to-end verification (alt): `documents/phase1_verify.sh`
+- OpenAI-only check: `documents/openai_gateway_test.sh`
+- PowerShell version: `documents/phase1_verify.ps1`
 
-These scripts rebuild containers, run health checks, validate PII policy behavior, and execute tests.
+These scripts rebuild containers, run health checks, validate PII policy behavior, execute tests, and perform real OpenAI and Cyren calls. OpenAI requires a key with active quota.
 
 ---
 
@@ -125,7 +132,7 @@ WORKERS=1
 LOG_LEVEL=INFO
 
 # LLM Target
-LLM_ENDPOINT=https://api.openai.com/v1
+LLM_ENDPOINT=https://api.openai.com
 LLM_API_KEY=your-openai-api-key
 
 # Data443 Cyren API (Trial Endpoints)
@@ -196,27 +203,30 @@ Admin:
 
 ```
 data443-llm-gateway/
-├─ gateway/
-│  ├─ main.py
-│  ├─ proxy.py
-│  ├─ policy.py
-│  ├─ cyren_client.py
-│  ├─ cache.py
-│  ├─ audit.py
-│  ├─ jwt_auth.py
-│  ├─ content_filter.py
-│  └─ admin_api.py
-├─ config/
-│  └─ settings.py
-├─ gateway/test/
-│  └─ test_gateway.py
-├─ documents/
-│  ├─ phase1_verify.sh
-│  └─ phase1_verify.ps1
-├─ docker-compose.yml
-├─ Dockerfile
-├─ requirements.txt
-└─ .env (create this)
+  gateway/
+    main.py
+    proxy.py
+    policy.py
+    cyren_client.py
+    cache.py
+    audit.py
+    jwt_auth.py
+    content_filter.py
+    admin_api.py
+  config/
+    settings.py
+  gateway/test/
+    test_gateway.py
+    phase1_verify.sh
+  documents/
+    phase1_verify.sh
+    phase1_verify.ps1
+    openai_gateway_test.sh
+    phase1_status_and_phase2_clarifications.md
+  docker-compose.yml
+  Dockerfile
+  requirements.txt
+  .env (create this)
 ```
 
 ---
@@ -226,6 +236,7 @@ data443-llm-gateway/
 - Circuit breaker prevents Cyren outages from blocking requests
 - Every decision is auditable and immutable in PostgreSQL
 - No LLM involved in security decisions
+- Phase 1 Admin API is not authenticated; protect it via network controls
 
 ---
 
