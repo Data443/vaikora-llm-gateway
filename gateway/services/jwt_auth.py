@@ -14,7 +14,7 @@ from loguru import logger
 # python-jose is the JWT library
 from jose import jwt, JWTError
 
-from config.settings import settings
+from gateway.core.config import settings
 
 
 class JWTAuth:
@@ -251,3 +251,4 @@ jwt_auth_handler = JWTAuth()
 def get_jwt_auth() -> JWTAuth:
     """Get global JWT auth handler instance."""
     return jwt_auth_handler
+

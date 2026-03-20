@@ -6,32 +6,23 @@ evaluates security policy, and forwards to target endpoint.
 """
 
 from contextlib import asynccontextmanager
-from typing import Dict, Any
-
-from fastapi import FastAPI, Request, Response, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 import uvicorn
 
 from loguru import logger
-import sys
 
-# Configure loguru
-logger.remove()
-logger.add(
-    sys.stdout,
-    format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-    level="INFO"
-)
-
-from config.settings import settings
-from gateway.cache import cache
-from gateway.audit import audit_logger
-from gateway.cyren_client import cyren_client
-from gateway.policy import init_policy_engine
-from gateway.proxy import init_proxy_handler, ProxyHandler
-from gateway.admin_api import get_admin_router
+from gateway.core.config import settings
+from gateway.core.logging import configure_logging
+from gateway.integrations.cache import cache
+from gateway.integrations.audit import audit_logger
+from gateway.integrations.cyren_client import cyren_client
+from gateway.services.policy_service import init_policy_engine
+from gateway.services.proxy_service import init_proxy_handler
+from gateway.api.admin import get_admin_router
+from gateway.api.public import public_router
 
 
 @asynccontextmanager
@@ -65,6 +56,8 @@ async def lifespan(app: FastAPI):
     logger.info("Shutdown complete")
 
 
+configure_logging(settings.log_level)
+
 # Create FastAPI app
 app = FastAPI(
     title="Data443 LLM Security Gateway",
@@ -83,91 +76,10 @@ app.add_middleware(
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Include admin API router
+# Include API routers
 admin_router = get_admin_router()
 app.include_router(admin_router)
-
-
-@app.get("/health")
-async def health_check(request: Request) -> Dict[str, Any]:
-    """
-    Health check endpoint.
-
-    Returns gateway status and component health.
-    """
-    proxy_handler = request.app.state.proxy_handler
-    return await proxy_handler.health_check()
-
-
-@app.get("/")
-async def root() -> Dict[str, Any]:
-    """Root endpoint with gateway information."""
-    return {
-        "name": "Data443 LLM Security Gateway",
-        "version": "1.0.0",
-        "status": "operational",
-        "endpoints": {
-            "health": "/health",
-            "proxy": "/{path}",
-            "audit": "/audit/log",
-        }
-    }
-
-
-@app.get("/audit/log")
-async def get_audit_log(
-    request: Request,
-    limit: int = 100,
-    offset: int = 0,
-    decision: str = None,
-    ip: str = None,
-) -> JSONResponse:
-    """
-    Query the audit log.
-
-    Query parameters:
-    - limit: Number of entries to return (default: 100)
-    - offset: Offset for pagination (default: 0)
-    - decision: Filter by decision type (ALLOW, BLOCK, CONSTRAIN)
-    - ip: Filter by IP address
-    """
-    from gateway.audit import Decision
-
-    decision_filter = Decision[decision] if decision else None
-    logs = await audit_logger.query_audit_log(
-        limit=limit,
-        offset=offset,
-        decision=decision_filter,
-        ip_address=ip,
-    )
-
-    return JSONResponse(content={
-        "total": len(logs),
-        "limit": limit,
-        "offset": offset,
-        "logs": logs
-    })
-
-
-@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def proxy_request(request: Request, path: str) -> Response:
-    """
-    Proxy all requests to the target LLM endpoint.
-
-    This is the main entry point for all LLM API requests.
-    """
-    proxy_handler = request.app.state.proxy_handler
-
-    try:
-        return await proxy_handler.handle_request(request)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error handling request: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
-        )
+app.include_router(public_router)
 
 
 @app.exception_handler(HTTPException)
@@ -186,7 +98,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 
 
 def main():
-    """Run the server."""
+    """Run server."""
     logger.info(f"Starting Data443 LLM Gateway on {settings.host}:{settings.port}")
     uvicorn.run(
         "gateway.main:app",
@@ -199,3 +111,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

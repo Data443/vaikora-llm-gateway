@@ -13,12 +13,13 @@ from fastapi import Request, Response, HTTPException, status
 from httpx import AsyncClient, Timeout
 from loguru import logger
 
-from config.settings import settings
-from gateway.policy import PolicyEngine, PolicyDecision, Decision
-from gateway.cache import cache
-from gateway.jwt_auth import JWTAuth, get_current_user_from_request
-from gateway.content_filter import get_content_filter, SecurityAction
-from gateway.admin_api import get_policy
+from gateway.core.config import settings
+from gateway.core.types import Decision
+from gateway.services.policy_service import PolicyEngine, PolicyDecision
+from gateway.integrations.cache import cache
+from gateway.services.jwt_auth import JWTAuth, get_current_user_from_request
+from gateway.services.content_filter import get_content_filter, SecurityAction
+from gateway.api.admin import get_policy
 
 
 class ProxyHandler:
@@ -226,10 +227,15 @@ class ProxyHandler:
                         )
 
                 # Return response
+                response_headers = dict(response.headers)
+                # httpx auto-decompresses response content but leaves original encoding headers.
+                # Strip encoding/length headers to avoid client-side decompression errors.
+                for h in ["content-encoding", "transfer-encoding", "content-length", "connection"]:
+                    response_headers.pop(h, None)
                 return Response(
                     content=response.content,
                     status_code=response.status_code,
-                    headers=dict(response.headers),
+                    headers=response_headers,
                 )
 
         except Exception as e:
@@ -305,3 +311,4 @@ def init_proxy_handler(policy_engine: PolicyEngine) -> ProxyHandler:
     global proxy_handler
     proxy_handler = ProxyHandler(policy_engine)
     return proxy_handler
+

@@ -12,9 +12,8 @@ import asyncio
 import httpx
 from loguru import logger
 
-from config.settings import settings
-from gateway.audit import audit_logger
-from gateway.cache import cache
+from gateway.core.config import settings
+from gateway.integrations.cache import cache
 
 
 class CyrenResponse:
@@ -302,3 +301,4 @@ x-ctch-url: {normalized_url}
 
 # Global Cyren client instance
 cyren_client = CyrenClient()
+

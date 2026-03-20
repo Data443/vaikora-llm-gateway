@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from loguru import logger
 
-from config.settings import settings
+from gateway.core.config import settings
 
 
 # Admin API router
@@ -310,3 +310,4 @@ def get_policy(name: str) -> Dict[str, Any]:
     """Get a copy of a policy by name."""
     policy = _policies.get(name)
     return dict(policy) if policy else {}
+

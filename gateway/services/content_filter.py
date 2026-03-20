@@ -11,8 +11,8 @@ from typing import List, Optional, Dict, Any
 from enum import Enum
 from loguru import logger
 
-from config.settings import settings
-from gateway.admin_api import get_policy
+from gateway.core.config import settings
+from gateway.api.admin import get_policy
 
 
 class SecurityAction(str, Enum):
@@ -438,3 +438,4 @@ content_filter = ContentFilter()
 def get_content_filter() -> ContentFilter:
     """Get global content filter instance."""
     return content_filter
+

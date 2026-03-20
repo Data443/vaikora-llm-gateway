@@ -14,7 +14,7 @@ import redis.asyncio as redis
 from redis.asyncio import Redis
 from loguru import logger
 
-from config.settings import settings
+from gateway.core.config import settings
 
 
 class L1Cache:
@@ -183,3 +183,4 @@ class TwoLevelCache:
 
 # Global cache instance
 cache = TwoLevelCache()
+

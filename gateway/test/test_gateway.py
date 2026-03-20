@@ -7,12 +7,13 @@ Phase 1: Complete testing without external API dependencies.
 
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
-from gateway.policy import PolicyEngine, PolicyDecision
-from gateway.audit import Decision, AuditLogger
-from gateway.cyren_client import CyrenClient, CyrenResponse, CircuitBreaker
-from gateway.cache import L1Cache, L2Cache, TwoLevelCache
-from gateway.jwt_auth import JWTAuth
-from gateway.content_filter import ContentFilter, SecurityAction
+from gateway.services.policy_service import PolicyEngine, PolicyDecision
+from gateway.core.types import Decision
+from gateway.integrations.audit import AuditLogger
+from gateway.integrations.cyren_client import CyrenClient, CyrenResponse, CircuitBreaker
+from gateway.integrations.cache import L1Cache, L2Cache, TwoLevelCache
+from gateway.services.jwt_auth import JWTAuth
+from gateway.services.content_filter import ContentFilter, SecurityAction
 
 
 # =============================================================================

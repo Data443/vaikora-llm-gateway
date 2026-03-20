@@ -5,14 +5,14 @@ Determines ALLOW/BLOCK/CONSTRAIN decisions based on Cyren threat intelligence.
 Fully deterministic - no LLM in decision path.
 """
 
-from enum import Enum
 from typing import Optional, Dict, Any
 
 from loguru import logger
 
-from config.settings import settings
-from gateway.audit import Decision, AuditLogger
-from gateway.cyren_client import CyrenClient, CyrenResponse
+from gateway.core.config import settings
+from gateway.core.types import Decision
+from gateway.integrations.audit import AuditLogger
+from gateway.integrations.cyren_client import CyrenClient, CyrenResponse
 
 
 class PolicyDecision:
@@ -43,10 +43,10 @@ class PolicyEngine:
     Policy evaluation engine for LLM Gateway decisions.
 
     Decision Logic:
-    - Risk score 80-100 = HIGH trust → ALLOW
-    - Risk score 50-79 = MEDIUM trust → ALLOW with logging
-    - Risk score 20-49 = LOW trust → CONSTRAIN
-    - Risk score 0-19 = CRITICAL risk → BLOCK
+    - Risk score 80-100 = HIGH trust -> ALLOW
+    - Risk score 50-79 = MEDIUM trust -> ALLOW with logging
+    - Risk score 20-49 = LOW trust -> CONSTRAIN
+    - Risk score 0-19 = CRITICAL risk -> BLOCK
     """
 
     def __init__(self, cyren_client: CyrenClient, audit_logger: AuditLogger):
@@ -88,7 +88,7 @@ class PolicyEngine:
         # Determine decision based on risk score
         decision, reason = self._get_decision_from_score(risk_score)
 
-        # Log the decision
+        # Log decision
         await self.audit_logger.log_decision(
             decision=decision,
             ip_address=ip_address,
@@ -223,3 +223,4 @@ def init_policy_engine(cyren_client, audit_logger) -> PolicyEngine:
     global policy_engine
     policy_engine = PolicyEngine(cyren_client, audit_logger)
     return policy_engine
+

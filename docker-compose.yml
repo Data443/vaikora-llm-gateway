@@ -73,7 +73,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
 
       # Target LLM (OpenAI)
-      LLM_ENDPOINT: ${LLM_ENDPOINT:-https://api.openai.com/v1}
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-https://api.openai.com}
       LLM_API_KEY: ${LLM_API_KEY:-}
 
       # Policy thresholds

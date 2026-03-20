@@ -6,23 +6,14 @@ Every ALLOW/BLOCK/CONSTRAIN decision is logged with full context.
 """
 
 from datetime import datetime
-from enum import Enum
 from typing import Optional
 import json
 
 import asyncpg
 from loguru import logger
 
-from config.settings import settings
-
-
-class Decision(str, Enum):
-    """Gateway decision types."""
-    ALLOW = "ALLOW"
-    ALLOW_LOG = "ALLOW_LOG"
-    CONSTRAIN = "CONSTRAIN"
-    BLOCK = "BLOCK"
-    ERROR = "ERROR"
+from gateway.core.config import settings
+from gateway.core.types import Decision
 
 
 class AuditLogger:
@@ -110,7 +101,7 @@ class AuditLogger:
         reason: Optional[str] = None,
         cyren_ref_id: Optional[str] = None,
     ) -> None:
-        """Log a gateway decision to the audit log."""
+        """Log a gateway decision to audit log."""
         if not self.connected:
             logger.warning("Audit log not connected, skipping")
             return
@@ -151,7 +142,7 @@ class AuditLogger:
         decision: Optional[Decision] = None,
         ip_address: Optional[str] = None,
     ) -> list[dict]:
-        """Query the audit log."""
+        """Query audit log."""
         if not self.connected:
             return []
 
@@ -183,3 +174,4 @@ class AuditLogger:
 
 # Global audit logger instance
 audit_logger = AuditLogger()
+
