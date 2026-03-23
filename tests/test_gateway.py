@@ -384,6 +384,7 @@ class TestContentFilter:
         ssn_detections = [item for item in result if item["type"] == "SSN"]
         assert len(ssn_detections) == 1
         assert ssn_detections[0]["severity"] == "HIGH"
+        assert ssn_detections[0]["match"] == "123-45-6789"
 
     async def test_detect_email(self, content_filter):
         """Test email detection."""
@@ -492,3 +493,4 @@ class TestAuditLogger:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
