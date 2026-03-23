@@ -19,6 +19,7 @@ from gateway.core.logging import configure_logging
 from gateway.integrations.cache import cache
 from gateway.integrations.audit import audit_logger
 from gateway.integrations.cyren_client import cyren_client
+from gateway.policy.store import policy_store
 from gateway.services.policy_service import init_policy_engine
 from gateway.services.proxy_service import init_proxy_handler
 from gateway.api.admin import get_admin_router
@@ -35,6 +36,9 @@ async def lifespan(app: FastAPI):
 
     # Connect to audit logger
     await audit_logger.connect()
+
+    # Initialize persistent policy/entitlement cache
+    await policy_store.initialize(audit_logger)
 
     # Initialize policy engine
     policy_engine = init_policy_engine(cyren_client, audit_logger)

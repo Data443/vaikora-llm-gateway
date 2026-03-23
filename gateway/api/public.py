@@ -38,6 +38,7 @@ async def root() -> Dict[str, Any]:
             "health": "/health",
             "proxy": "/{path}",
             "audit": "/audit/log",
+            "events": "/audit/events",
         },
     }
 
@@ -72,6 +73,36 @@ async def get_audit_log(
         "limit": limit,
         "offset": offset,
         "logs": logs,
+    }))
+
+
+@public_router.get("/audit/events")
+async def get_gateway_events(
+    limit: int = 100,
+    offset: int = 0,
+    decision: str = None,
+    request_id: str = None,
+) -> JSONResponse:
+    """
+    Query structured gateway event stream.
+
+    Query parameters:
+    - limit: Number of entries to return (default: 100)
+    - offset: Offset for pagination (default: 0)
+    - decision: Filter by decision value
+    - request_id: Filter by request id
+    """
+    events = await audit_logger.query_gateway_events(
+        limit=limit,
+        offset=offset,
+        decision=decision,
+        request_id=request_id,
+    )
+    return JSONResponse(content=jsonable_encoder({
+        "total": len(events),
+        "limit": limit,
+        "offset": offset,
+        "events": events,
     }))
 
 

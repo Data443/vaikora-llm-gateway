@@ -1,63 +1,46 @@
 """
-Data443 LLM Gateway - Admin API for Policy Management
+Data443 LLM Gateway - Admin API for Policy and Entitlement Management.
 
-REST API for managing security policies without gateway restart.
+All policy updates are versioned and persisted when PostgreSQL is available.
 """
 
+from __future__ import annotations
+
+from datetime import datetime
 from typing import List, Optional, Dict, Any
+
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from loguru import logger
 
 from gateway.core.config import settings
+from gateway.policy.store import policy_store
 
 
-# Admin API router
 admin_router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-# Policy storage (in production, use database or Redis)
-_policies = {
-    "pii_detection": {
-        "enabled": True,
-        "action_on_detect": "BLOCK",  # BLOCK, CONSTRAIN, LOG_ONLY, PASS
-        "severity_threshold": "LOW"  # LOW, MEDIUM, HIGH
-    },
-    "jailbreak_detection": {
-        "enabled": True,
-        "action_on_detect": "BLOCK",
-        "max_attempts": 3,
-    },
-    "injection_detection": {
-        "enabled": True,
-        "action_on_detect": "BLOCK",
-    },
-    "jwt_auth": {
-        "enabled": False,  # Disabled by default
-        "secret": settings.jwt_secret,
-        "issuer": settings.jwt_issuer,
-        "audience": settings.jwt_audience,
-    },
-}
-
-
-# Pydantic models for request/response
 class PolicyUpdate(BaseModel):
     """Request to update a policy."""
-    policy_name: str
     enabled: Optional[bool] = None
     action: Optional[str] = None
+    action_on_detect: Optional[str] = None
     severity_threshold: Optional[str] = None
     max_attempts: Optional[int] = None
     secret: Optional[str] = None
     issuer: Optional[str] = None
     audience: Optional[str] = None
+    changed_by: Optional[str] = "admin"
+    change_note: Optional[str] = "policy update"
+
 
 class PolicyResponse(BaseModel):
     """Policy update response."""
     success: bool
     message: str
     policy: Optional[Dict[str, Any]] = None
+    version: Optional[int] = None
+
 
 class PolicyListItem(BaseModel):
     """Policy item in list."""
@@ -65,239 +48,279 @@ class PolicyListItem(BaseModel):
     enabled: bool
     config: Dict[str, Any]
 
+
 class PolicyListResponse(BaseModel):
     """List all policies response."""
     policies: List[PolicyListItem]
 
 
-# ============= PII Detection Policy =============
+class PolicyVersionItem(BaseModel):
+    """Single policy version record."""
+    policy_name: str
+    version: int
+    config: Dict[str, Any]
+    created_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    change_note: Optional[str] = None
+
+
+class PolicyVersionsResponse(BaseModel):
+    """Policy version list response."""
+    success: bool
+    policy_name: str
+    versions: List[PolicyVersionItem]
+
+
+class PolicyRollbackRequest(BaseModel):
+    """Rollback request payload."""
+    version: int = Field(..., ge=1)
+    changed_by: Optional[str] = "admin"
+
+
+class EntitlementsResponse(BaseModel):
+    """Entitlement response payload."""
+    success: bool
+    message: str
+    entitlements: Dict[str, Any]
+    version: Optional[int] = None
+
+
+class EntitlementsUpdateRequest(BaseModel):
+    """Entitlement update payload."""
+    modules: Optional[Dict[str, bool]] = None
+    providers: Optional[Dict[str, bool]] = None
+    limits: Optional[Dict[str, Any]] = None
+    changed_by: Optional[str] = "admin"
+    change_note: Optional[str] = "entitlement update"
+
+
+def _resolve_action(request: PolicyUpdate) -> Optional[str]:
+    """Support both action and action_on_detect payload fields."""
+    return request.action_on_detect or request.action
+
+
+def _build_policy_updates(request: PolicyUpdate) -> Dict[str, Any]:
+    """Build policy update dictionary from request model."""
+    updates: Dict[str, Any] = {}
+    if request.enabled is not None:
+        updates["enabled"] = request.enabled
+    action = _resolve_action(request)
+    if action is not None:
+        updates["action_on_detect"] = action.upper()
+    if request.severity_threshold is not None:
+        updates["severity_threshold"] = request.severity_threshold.upper()
+    if request.max_attempts is not None:
+        updates["max_attempts"] = int(request.max_attempts)
+    if request.secret is not None:
+        updates["secret"] = request.secret
+    if request.issuer is not None:
+        updates["issuer"] = request.issuer
+    if request.audience is not None:
+        updates["audience"] = request.audience
+    return updates
+
+
+async def _update_policy(policy_name: str, request: PolicyUpdate, message: str) -> PolicyResponse:
+    """Shared policy update operation."""
+    try:
+        updated, version = await policy_store.update_policy(
+            name=policy_name,
+            updates=_build_policy_updates(request),
+            changed_by=request.changed_by or "admin",
+            change_note=request.change_note or "policy update",
+        )
+        logger.info(f"{policy_name} updated to version {version}")
+        return PolicyResponse(
+            success=True,
+            message=message,
+            policy=updated,
+            version=version,
+        )
+    except Exception as exc:
+        logger.error(f"Failed to update {policy_name}: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update policy '{policy_name}'",
+        ) from exc
+
+
+@admin_router.get("/policies", response_model=PolicyListResponse)
+async def list_policies() -> PolicyListResponse:
+    """List all security policies."""
+    items = [PolicyListItem(**item) for item in policy_store.list_policies()]
+    return PolicyListResponse(policies=items)
+
 
 @admin_router.get("/policies/pii", response_model=PolicyResponse)
 async def get_pii_policy() -> PolicyResponse:
     """Get PII detection policy."""
-    policy = _policies.get("pii_detection", {})
     return PolicyResponse(
         success=True,
         message="PII detection policy",
-        policy=policy
+        policy=policy_store.get_policy("pii_detection"),
     )
 
 
 @admin_router.put("/policies/pii", response_model=PolicyResponse)
 async def update_pii_policy(request: PolicyUpdate) -> PolicyResponse:
     """Update PII detection policy."""
-    if "pii_detection" not in _policies:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="PII detection policy not found"
-        )
+    return await _update_policy("pii_detection", request, "PII detection policy updated")
 
-    current = _policies["pii_detection"]
-
-    if request.enabled is not None:
-        current["enabled"] = request.enabled
-    if request.action is not None:
-        current["action_on_detect"] = request.action.upper()
-    if request.severity_threshold is not None:
-        current["severity_threshold"] = request.severity_threshold.upper()
-
-    logger.info(f"PII policy updated: {current}")
-    return PolicyResponse(
-        success=True,
-        message="PII detection policy updated",
-        policy=current
-    )
-
-
-# ============= Jailbreak Detection Policy =============
 
 @admin_router.get("/policies/jailbreak", response_model=PolicyResponse)
 async def get_jailbreak_policy() -> PolicyResponse:
     """Get jailbreak detection policy."""
-    policy = _policies.get("jailbreak_detection", {})
     return PolicyResponse(
         success=True,
         message="Jailbreak detection policy",
-        policy=policy
+        policy=policy_store.get_policy("jailbreak_detection"),
     )
 
 
 @admin_router.put("/policies/jailbreak", response_model=PolicyResponse)
 async def update_jailbreak_policy(request: PolicyUpdate) -> PolicyResponse:
     """Update jailbreak detection policy."""
-    if "jailbreak_detection" not in _policies:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Jailbreak detection policy not found"
-        )
+    return await _update_policy("jailbreak_detection", request, "Jailbreak detection policy updated")
 
-    current = _policies["jailbreak_detection"]
-
-    if request.enabled is not None:
-        current["enabled"] = request.enabled
-    if request.action is not None:
-        current["action_on_detect"] = request.action.upper()
-    if request.max_attempts is not None:
-        current["max_attempts"] = request.max_attempts
-
-    logger.info(f"Jailbreak policy updated: {current}")
-    return PolicyResponse(
-        success=True,
-        message="Jailbreak detection policy updated",
-        policy=current
-    )
-
-
-# ============= Injection Detection Policy =============
 
 @admin_router.get("/policies/injection", response_model=PolicyResponse)
 async def get_injection_policy() -> PolicyResponse:
     """Get injection detection policy."""
-    policy = _policies.get("injection_detection", {})
     return PolicyResponse(
         success=True,
         message="Injection detection policy",
-        policy=policy
+        policy=policy_store.get_policy("injection_detection"),
     )
 
 
 @admin_router.put("/policies/injection", response_model=PolicyResponse)
 async def update_injection_policy(request: PolicyUpdate) -> PolicyResponse:
     """Update injection detection policy."""
-    if "injection_detection" not in _policies:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Injection detection policy not found"
-        )
+    return await _update_policy("injection_detection", request, "Injection detection policy updated")
 
-    current = _policies["injection_detection"]
-
-    if request.enabled is not None:
-        current["enabled"] = request.enabled
-    if request.action is not None:
-        current["action_on_detect"] = request.action.upper()
-
-    logger.info(f"Injection policy updated: {current}")
-    return PolicyResponse(
-        success=True,
-        message="Injection detection policy updated",
-        policy=current
-    )
-
-
-# ============= JWT Auth Policy =============
 
 @admin_router.get("/policies/jwt", response_model=PolicyResponse)
 async def get_jwt_policy() -> PolicyResponse:
     """Get JWT authentication policy."""
-    policy = _policies.get("jwt_auth", {})
+    jwt_policy = policy_store.get_policy("jwt_auth")
+    if not jwt_policy:
+        jwt_policy = {
+            "enabled": settings.jwt_enabled,
+            "secret": settings.jwt_secret,
+            "issuer": settings.jwt_issuer,
+            "audience": settings.jwt_audience,
+        }
     return PolicyResponse(
         success=True,
         message="JWT authentication policy",
-        policy=policy
+        policy=jwt_policy,
     )
 
 
 @admin_router.put("/policies/jwt", response_model=PolicyResponse)
 async def update_jwt_policy(request: PolicyUpdate) -> PolicyResponse:
     """Update JWT authentication policy."""
-    if "jwt_auth" not in _policies:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="JWT authentication policy not found"
-        )
+    return await _update_policy("jwt_auth", request, "JWT authentication policy updated")
 
-    current = _policies["jwt_auth"]
 
-    if request.enabled is not None:
-        current["enabled"] = request.enabled
-    if request.secret is not None:
-        current["secret"] = request.secret
-    if request.issuer is not None:
-        current["issuer"] = request.issuer
-    if request.audience is not None:
-        current["audience"] = request.audience
-
-    logger.info(f"JWT policy updated: {current}")
-    return PolicyResponse(
+@admin_router.get("/policies/{policy_name}/versions", response_model=PolicyVersionsResponse)
+async def get_policy_versions(policy_name: str, limit: int = 20) -> PolicyVersionsResponse:
+    """Get policy version history."""
+    versions = await policy_store.list_policy_versions(policy_name, limit=limit)
+    return PolicyVersionsResponse(
         success=True,
-        message="JWT authentication policy updated",
-        policy=current
+        policy_name=policy_name,
+        versions=[PolicyVersionItem(**item) for item in versions],
     )
 
 
-# ============= List All Policies =============
+@admin_router.post("/policies/{policy_name}/rollback", response_model=PolicyResponse)
+async def rollback_policy(policy_name: str, request: PolicyRollbackRequest) -> PolicyResponse:
+    """Rollback policy to a previous version and create a new version entry."""
+    try:
+        policy, version = await policy_store.rollback_policy(
+            name=policy_name,
+            target_version=request.version,
+            changed_by=request.changed_by or "admin",
+        )
+        return PolicyResponse(
+            success=True,
+            message=f"Policy '{policy_name}' rolled back to version {request.version}",
+            policy=policy,
+            version=version,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.error(f"Policy rollback failed: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to rollback policy '{policy_name}'",
+        ) from exc
 
-@admin_router.get("/policies", response_model=PolicyListResponse)
-async def list_policies() -> PolicyListResponse:
-    """List all security policies."""
-    policies_list = []
-
-    for name, policy in _policies.items():
-        policies_list.append(PolicyListItem(
-            name=name,
-            enabled=policy.get("enabled", False),
-            config=policy
-        ))
-
-    return PolicyListResponse(policies=policies_list)
-
-
-# ============= Delete Policy =============
 
 @admin_router.delete("/policies/{policy_name}", response_model=PolicyResponse)
 async def delete_policy(policy_name: str) -> PolicyResponse:
-    """Delete a policy by name."""
-    if policy_name not in _policies:
+    """Soft-delete a policy by disabling it."""
+    try:
+        policy = await policy_store.delete_policy(policy_name)
+        return PolicyResponse(
+            success=True,
+            message=f"Policy '{policy_name}' deleted",
+            policy=policy,
+        )
+    except KeyError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Policy '{policy_name}' not found"
+            detail=f"Policy '{policy_name}' not found",
         )
 
-    del _policies[policy_name]
-
-    logger.info(f"Policy deleted: {policy_name}")
-    return PolicyResponse(
-        success=True,
-        message=f"Policy '{policy_name}' deleted",
-        policy=None
-    )
-
-
-# ============= Reset Policies =============
 
 @admin_router.post("/policies/reset", response_model=PolicyResponse)
 async def reset_policies() -> PolicyResponse:
     """Reset all policies to defaults."""
-    global _policies
-    _policies = {
-        "pii_detection": {
-            "enabled": True,
-            "action_on_detect": "BLOCK",
-            "severity_threshold": "LOW",
-        },
-        "jailbreak_detection": {
-            "enabled": True,
-            "action_on_detect": "BLOCK",
-            "max_attempts": 3,
-        },
-        "injection_detection": {
-            "enabled": True,
-            "action_on_detect": "BLOCK",
-        },
-        "jwt_auth": {
-            "enabled": False,
-            "secret": settings.jwt_secret,
-            "issuer": settings.jwt_issuer,
-            "audience": settings.jwt_audience,
-        },
-    }
-
-    logger.info("All policies reset to defaults")
+    await policy_store.reset_policies()
     return PolicyResponse(
         success=True,
         message="All policies reset to defaults",
-        policy=None
+        policy=None,
+    )
+
+
+@admin_router.get("/entitlements", response_model=EntitlementsResponse)
+async def get_entitlements() -> EntitlementsResponse:
+    """Get current entitlement configuration."""
+    return EntitlementsResponse(
+        success=True,
+        message="Current entitlements",
+        entitlements=policy_store.get_entitlements(),
+    )
+
+
+@admin_router.put("/entitlements", response_model=EntitlementsResponse)
+async def update_entitlements(request: EntitlementsUpdateRequest) -> EntitlementsResponse:
+    """Update entitlement configuration and create a version entry."""
+    updates: Dict[str, Any] = {}
+    if request.modules is not None:
+        updates["modules"] = request.modules
+    if request.providers is not None:
+        updates["providers"] = request.providers
+    if request.limits is not None:
+        updates["limits"] = request.limits
+
+    entitlements, version = await policy_store.update_entitlements(
+        updates=updates,
+        changed_by=request.changed_by or "admin",
+        change_note=request.change_note or "entitlement update",
+    )
+    return EntitlementsResponse(
+        success=True,
+        message="Entitlements updated",
+        entitlements=entitlements,
+        version=version,
     )
 
 
@@ -307,7 +330,5 @@ def get_admin_router() -> APIRouter:
 
 
 def get_policy(name: str) -> Dict[str, Any]:
-    """Get a copy of a policy by name."""
-    policy = _policies.get(name)
-    return dict(policy) if policy else {}
-
+    """Fast-path policy getter used by request pipeline."""
+    return policy_store.get_policy(name)
