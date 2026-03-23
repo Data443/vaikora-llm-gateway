@@ -88,7 +88,7 @@ Note: Set `LLM_ENDPOINT` to `https://api.openai.com` (no `/v1`). For testing, se
 **Phase 1 Verification (Single Script)**
 
 ```bash
-bash gateway/test/phase1_verify.sh
+bash tests/phase1_verify.sh
 ```
 
 This runs:
@@ -123,7 +123,7 @@ Note: Policy storage is in-memory for Phase 1. For long-term production use, bac
 Run the Phase 1 test suite (33 tests):
 
 ```bash
-python -m pytest gateway/test/test_gateway.py -q
+python -m pytest tests/test_gateway.py -q
 ```
 
 Note: These tests are mocked and do not call OpenAI or Cyren.
@@ -132,9 +132,9 @@ Note: These tests are mocked and do not call OpenAI or Cyren.
 
 **Verification (Real Calls)**
 
-- End-to-end verification: `gateway/test/phase1_verify.sh`
-- OpenAI-only check: `documents/openai_gateway_test.sh`
-- PowerShell version: `documents/phase1_verify.ps1`
+- End-to-end verification: `tests/phase1_verify.sh`
+- OpenAI-only check: `documents/setup_and_run/openai_gateway_test.sh`
+- PowerShell version: `documents/setup_and_run/phase1_verify.ps1`
 
 These scripts rebuild containers, run health checks, validate PII policy behavior, execute tests, and perform real OpenAI and Cyren calls. OpenAI requires a key with active quota.
 
@@ -239,9 +239,9 @@ data443-llm-gateway/
       cyren_client.py
       cache.py
       audit.py
-    test/
-      test_gateway.py
-      phase1_verify.sh
+  tests/
+    test_gateway.py
+    phase1_verify.sh
   tools/
     redteam_prompts.jsonl
     redteam_runner.py
@@ -268,3 +268,7 @@ data443-llm-gateway/
 **License**
 
 Data443 - All rights reserved.
+
+
+
+

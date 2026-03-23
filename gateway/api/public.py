@@ -5,6 +5,7 @@ Public API routes for the Data443 LLM Gateway.
 from typing import Dict, Any
 
 from fastapi import APIRouter, Request, Response, HTTPException, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from loguru import logger
 
@@ -66,12 +67,12 @@ async def get_audit_log(
         ip_address=ip,
     )
 
-    return JSONResponse(content={
+    return JSONResponse(content=jsonable_encoder({
         "total": len(logs),
         "limit": limit,
         "offset": offset,
         "logs": logs,
-    })
+    }))
 
 
 @public_router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])

@@ -4,7 +4,7 @@
 
 set +e
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR" || exit 1
 
 # Load .env if present
@@ -19,6 +19,12 @@ MODEL="${LLM_MODEL:-gpt-4o-mini}"
 RUN_REDTEAM="${RUN_REDTEAM:-1}"
 REDTEAM_PROMPTS="${REDTEAM_PROMPTS:-$ROOT_DIR/tools/redteam_prompts.jsonl}"
 export REDTEAM_PROMPTS
+
+if command -v docker-compose >/dev/null 2>&1; then
+  DC=(docker-compose)
+else
+  DC=(docker compose)
+fi
 
 section() {
   echo ""
@@ -38,9 +44,9 @@ run_curl_with_status() {
 
 # 1) Docker-compose bring-up
 section "Docker Compose: Rebuild + Start"
-docker-compose down
-docker-compose up -d --build
-docker-compose ps
+"${DC[@]}" down
+"${DC[@]}" up -d --build
+"${DC[@]}" ps
 
 # 2) Wait for gateway health
 section "Wait for /health"
@@ -60,7 +66,7 @@ fi
 
 # 3) Automated tests
 section "Automated Tests (pytest)"
-python -m pytest gateway/test/test_gateway.py -q
+python -m pytest tests/test_gateway.py -q
 
 # 4) Manual checks
 run_curl_with_status "Get PII Policy" curl http://localhost:8000/admin/policies/pii
@@ -117,3 +123,5 @@ else
 fi
 
 section "Done"
+
+

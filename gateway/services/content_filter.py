@@ -34,7 +34,7 @@ class ContentFilter:
 
     # PII Patterns (compiled regex for performance)
     _SSN_PATTERN = re.compile(
-        r'\b\d{3}[-.\s]?\d{2}\b',  # 123-45-6789
+        r'\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b',  # 123-45-6789
         flags=re.IGNORECASE
     )
     _SSN_PATTERN_HYPHENS = re.compile(
