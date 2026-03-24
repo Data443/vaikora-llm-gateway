@@ -1,0 +1,1 @@
+cd /workspaces/data443-llm-gateway && bash commands/phase2_apply_and_verify_vps.sh

@@ -9,15 +9,20 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from loguru import logger
 
 from gateway.core.config import settings
+from gateway.api.auth import require_admin_auth
 from gateway.policy.store import policy_store
 
 
-admin_router = APIRouter(prefix="/admin", tags=["admin"])
+admin_router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    dependencies=[Depends(require_admin_auth)],
+)
 
 
 class PolicyUpdate(BaseModel):
@@ -154,10 +159,12 @@ async def list_policies() -> PolicyListResponse:
 @admin_router.get("/policies/pii", response_model=PolicyResponse)
 async def get_pii_policy() -> PolicyResponse:
     """Get PII detection policy."""
+    policy, version = await policy_store.get_policy_with_version("pii_detection")
     return PolicyResponse(
         success=True,
         message="PII detection policy",
-        policy=policy_store.get_policy("pii_detection"),
+        policy=policy,
+        version=version,
     )
 
 
@@ -170,10 +177,12 @@ async def update_pii_policy(request: PolicyUpdate) -> PolicyResponse:
 @admin_router.get("/policies/jailbreak", response_model=PolicyResponse)
 async def get_jailbreak_policy() -> PolicyResponse:
     """Get jailbreak detection policy."""
+    policy, version = await policy_store.get_policy_with_version("jailbreak_detection")
     return PolicyResponse(
         success=True,
         message="Jailbreak detection policy",
-        policy=policy_store.get_policy("jailbreak_detection"),
+        policy=policy,
+        version=version,
     )
 
 
@@ -186,10 +195,12 @@ async def update_jailbreak_policy(request: PolicyUpdate) -> PolicyResponse:
 @admin_router.get("/policies/injection", response_model=PolicyResponse)
 async def get_injection_policy() -> PolicyResponse:
     """Get injection detection policy."""
+    policy, version = await policy_store.get_policy_with_version("injection_detection")
     return PolicyResponse(
         success=True,
         message="Injection detection policy",
-        policy=policy_store.get_policy("injection_detection"),
+        policy=policy,
+        version=version,
     )
 
 
@@ -202,7 +213,7 @@ async def update_injection_policy(request: PolicyUpdate) -> PolicyResponse:
 @admin_router.get("/policies/jwt", response_model=PolicyResponse)
 async def get_jwt_policy() -> PolicyResponse:
     """Get JWT authentication policy."""
-    jwt_policy = policy_store.get_policy("jwt_auth")
+    jwt_policy, version = await policy_store.get_policy_with_version("jwt_auth")
     if not jwt_policy:
         jwt_policy = {
             "enabled": settings.jwt_enabled,
@@ -210,10 +221,12 @@ async def get_jwt_policy() -> PolicyResponse:
             "issuer": settings.jwt_issuer,
             "audience": settings.jwt_audience,
         }
+        version = None
     return PolicyResponse(
         success=True,
         message="JWT authentication policy",
         policy=jwt_policy,
+        version=version,
     )
 
 
@@ -293,10 +306,12 @@ async def reset_policies() -> PolicyResponse:
 @admin_router.get("/entitlements", response_model=EntitlementsResponse)
 async def get_entitlements() -> EntitlementsResponse:
     """Get current entitlement configuration."""
+    entitlements, version = await policy_store.get_entitlements_with_version()
     return EntitlementsResponse(
         success=True,
         message="Current entitlements",
-        entitlements=policy_store.get_entitlements(),
+        entitlements=entitlements,
+        version=version,
     )
 
 

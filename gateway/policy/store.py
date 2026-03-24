@@ -139,6 +139,23 @@ class PolicyStore:
         """Get policy config copy by name."""
         return deepcopy(self._policies.get(name, {}))
 
+    async def get_policy_with_version(self, name: str) -> tuple[Dict[str, Any], Optional[int]]:
+        """Get current policy config and latest version number."""
+        policy = self.get_policy(name)
+        version = await self.get_policy_version(name)
+        return policy, version
+
+    async def get_policy_version(self, name: str) -> Optional[int]:
+        """Get latest policy version for a policy name."""
+        if self._audit_logger and self._audit_logger.connected:
+            latest = await self._audit_logger.get_latest_policy(name)
+            if latest and latest.get("version") is not None:
+                return int(latest["version"])
+            return None
+        if name in self._policies:
+            return int(self._fallback_versions.get(name, 1))
+        return None
+
     def list_policies(self) -> List[Dict[str, Any]]:
         """List all policies from runtime cache."""
         return [
@@ -256,6 +273,21 @@ class PolicyStore:
     def get_entitlements(self) -> Dict[str, Any]:
         """Get entitlement set copy."""
         return deepcopy(self._entitlements)
+
+    async def get_entitlements_with_version(self) -> tuple[Dict[str, Any], Optional[int]]:
+        """Get current entitlement set with latest version number."""
+        entitlements = self.get_entitlements()
+        version = await self.get_entitlements_version()
+        return entitlements, version
+
+    async def get_entitlements_version(self) -> Optional[int]:
+        """Get latest entitlement version."""
+        if self._audit_logger and self._audit_logger.connected:
+            latest = await self._audit_logger.get_latest_entitlements()
+            if latest and latest.get("version") is not None:
+                return int(latest["version"])
+            return None
+        return int(self._fallback_entitlement_version)
 
     async def update_entitlements(
         self,

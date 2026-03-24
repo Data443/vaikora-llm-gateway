@@ -1,12 +1,13 @@
 # Data443 LLM Security Gateway
 
-Production-ready Phase 1 reverse-proxy security gateway for LLM endpoints. The gateway intercepts every request and response, evaluates deterministic security policies, and enforces ALLOW/BLOCK/CONSTRAIN decisions before traffic reaches the LLM.
+Production-ready LLM reverse-proxy security gateway. The gateway intercepts every request and response, evaluates deterministic security policies, and enforces ALLOW/BLOCK/CONSTRAIN decisions before traffic reaches the LLM.
 
 ---
 
 **Status**
 - Phase 1: Production-ready prototype complete
-- Test suite: 33 tests passing
+- Phase 2 production track: provider adapters + admin auth + entitlement limits implemented
+- Test suite: 42 tests passing
 - End-to-end verification: OpenAI + Cyren IPRep/URLF confirmed
 
 ---
@@ -22,6 +23,11 @@ Production-ready Phase 1 reverse-proxy security gateway for LLM endpoints. The g
 - Immutable audit log in PostgreSQL
 - Circuit breaker for external dependency failures
 - Admin API for hot policy updates
+- Policy versioning with rollback support
+- Entitlement-aware provider/model enforcement
+- Entitlement-aware input/output size limits
+- Multi-provider adapter layer (OpenAI, Anthropic, Gemini, OpenRouter)
+- Structured gateway event stream (`/audit/events`)
 - JSON response inspection for policy enforcement
 
 ---
@@ -37,6 +43,7 @@ Client / AI Agent
 |  - JWT Auth (optional)                    |
 |  - Content Filter (PII/Jailbreak/Inject)  |
 |  - Policy Engine (ALLOW/BLOCK/CONSTRAIN)  |
+|  - Provider Router (OpenAI/Claude/Gemini) |
 |  - Cache (L1/L2)                          |
 |  - Audit Log                              |
 +-------------------------------------------+
@@ -104,29 +111,42 @@ Red-team results are saved to:
 
 ---
 
-**Admin Policy Updates (Phase 1)**
+**Phase 2 Foundation Verification**
 
-Policy updates require `policy_name` in the JSON body.
+```bash
+bash documents/setup_and_run/phase2_verify.sh
+```
+
+This verifies:
+- policy versioning and rollback endpoints
+- entitlement update and provider gating behavior
+- optional Anthropic/Gemini/OpenRouter checks (if keys are configured)
+- structured gateway event query endpoint
+- full test suite
+
+---
+
+**Admin Policy Updates**
 
 ```bash
 curl -X PUT http://localhost:8000/admin/policies/pii \
   -H "Content-Type: application/json" \
-  -d '{"policy_name":"pii_detection","action":"LOG_ONLY"}'
+  -d '{"action":"LOG_ONLY","changed_by":"admin"}'
 ```
 
-Note: Policy storage is in-memory for Phase 1. For long-term production use, back this with Redis or a database.
+Policy and entitlement changes are versioned in PostgreSQL when connected.
 
 ---
 
 **Testing**
 
-Run the Phase 1 test suite (33 tests):
+Run the full test suite:
 
 ```bash
-python -m pytest tests/test_gateway.py -q
+python -m pytest -q
 ```
 
-Note: These tests are mocked and do not call OpenAI or Cyren.
+Note: Unit tests are mocked and do not call OpenAI or Cyren directly.
 
 ---
 
@@ -150,8 +170,18 @@ WORKERS=1
 LOG_LEVEL=INFO
 
 # LLM Target
+LLM_PROVIDER=openai
 LLM_ENDPOINT=https://api.openai.com
 LLM_API_KEY=your-openai-api-key
+OPENAI_ENDPOINT=https://api.openai.com
+OPENAI_API_KEY=
+ANTHROPIC_ENDPOINT=https://api.anthropic.com
+ANTHROPIC_API_KEY=
+ANTHROPIC_API_VERSION=2023-06-01
+GEMINI_ENDPOINT=https://generativelanguage.googleapis.com
+GEMINI_API_KEY=
+OPENROUTER_ENDPOINT=https://openrouter.ai/api/v1
+OPENROUTER_API_KEY=
 
 # Data443 Cyren API (Trial Endpoints)
 CYREN_IPREP_URL=https://try-now-ipreputation.data443.io/ctipd/iprep
@@ -186,6 +216,10 @@ JWT_ENABLED=false
 JWT_SECRET=your-secret-key-change-in-production
 JWT_ISSUER=data443-gateway
 JWT_AUDIENCE=data443-gateway
+
+# Admin API Authentication (Optional)
+ADMIN_AUTH_ENABLED=false
+ADMIN_API_KEY=
 ```
 
 ---
@@ -198,6 +232,7 @@ Public:
 | `GET /` | Gateway information |
 | `GET /health` | Health check and component status |
 | `GET /audit/log` | Query audit log |
+| `GET /audit/events` | Query structured gateway events |
 | `* /{path:path}` | Proxy to target LLM endpoint |
 
 Admin:
@@ -212,6 +247,10 @@ Admin:
 | `PUT /admin/policies/injection` | Update injection policy |
 | `GET /admin/policies/jwt` | Get JWT auth policy |
 | `PUT /admin/policies/jwt` | Update JWT auth policy |
+| `GET /admin/policies/{name}/versions` | List policy versions |
+| `POST /admin/policies/{name}/rollback` | Rollback to previous policy version |
+| `GET /admin/entitlements` | Get entitlement configuration |
+| `PUT /admin/entitlements` | Update entitlement configuration |
 | `DELETE /admin/policies/{name}` | Delete a policy |
 | `POST /admin/policies/reset` | Reset all policies |
 
@@ -239,8 +278,19 @@ data443-llm-gateway/
       cyren_client.py
       cache.py
       audit.py
+    policy/
+      store.py
+    providers/
+      base.py
+      router.py
+      openai_provider.py
+      anthropic_provider.py
+      gemini_provider.py
+      openrouter_provider.py
   tests/
     test_gateway.py
+    test_phase2_policy_store.py
+    test_phase2_provider_adapters.py
     phase1_verify.sh
   tools/
     redteam_prompts.jsonl
@@ -261,14 +311,10 @@ data443-llm-gateway/
 - Circuit breaker prevents Cyren outages from blocking requests
 - Every decision is auditable and immutable in PostgreSQL
 - No LLM involved in security decisions
-- Phase 1 Admin API is not authenticated; protect it via network controls
+- Admin API key auth is available via `ADMIN_AUTH_ENABLED=true`
 
 ---
 
 **License**
 
 Data443 - All rights reserved.
-
-
-
-

@@ -60,7 +60,15 @@ async def get_audit_log(
     - decision: Filter by decision type (ALLOW, BLOCK, CONSTRAIN)
     - ip: Filter by IP address
     """
-    decision_filter = Decision[decision] if decision else None
+    decision_filter = None
+    if decision:
+        try:
+            decision_filter = Decision[decision.upper()]
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid decision value: {decision}",
+            ) from exc
     logs = await audit_logger.query_audit_log(
         limit=limit,
         offset=offset,

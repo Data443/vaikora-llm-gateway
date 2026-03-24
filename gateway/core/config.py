@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     postgres_password: str = Field(default="", description="PostgreSQL password")
 
     # Target LLM Configuration (OpenAI)
+    llm_provider: str = Field(
+        default="openai",
+        description="Default upstream provider (openai, anthropic, gemini, openrouter)"
+    )
     llm_endpoint: str = Field(
         default="https://api.openai.com",
         description="Target LLM API base endpoint"
@@ -69,6 +73,44 @@ class Settings(BaseSettings):
     llm_api_key: str = Field(
         default="",
         description="Target LLM API key (will be proxied from request)"
+    )
+
+    # Provider-specific settings
+    openai_endpoint: str = Field(
+        default="https://api.openai.com",
+        description="OpenAI API base endpoint"
+    )
+    openai_api_key: str = Field(
+        default="",
+        description="OpenAI API key (if explicit provider routing is used)"
+    )
+    anthropic_endpoint: str = Field(
+        default="https://api.anthropic.com",
+        description="Anthropic API base endpoint"
+    )
+    anthropic_api_key: str = Field(
+        default="",
+        description="Anthropic API key"
+    )
+    anthropic_api_version: str = Field(
+        default="2023-06-01",
+        description="Anthropic API version header value"
+    )
+    gemini_endpoint: str = Field(
+        default="https://generativelanguage.googleapis.com",
+        description="Google Gemini API base endpoint"
+    )
+    gemini_api_key: str = Field(
+        default="",
+        description="Google Gemini API key"
+    )
+    openrouter_endpoint: str = Field(
+        default="https://openrouter.ai/api/v1",
+        description="OpenRouter API base endpoint"
+    )
+    openrouter_api_key: str = Field(
+        default="",
+        description="OpenRouter API key"
     )
 
     # Policy Configuration
@@ -102,6 +144,16 @@ class Settings(BaseSettings):
     jwt_audience: str = Field(
         default="data443-gateway",
         description="JWT audience"
+    )
+
+    # Admin API hardening
+    admin_auth_enabled: bool = Field(
+        default=False,
+        description="Enable admin API authentication"
+    )
+    admin_api_key: str = Field(
+        default="",
+        description="Static admin API key (x-admin-key)"
     )
 
     # Circuit Breaker

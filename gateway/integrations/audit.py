@@ -177,7 +177,7 @@ class AuditLogger:
                     request_id,
                     request_method,
                     request_path,
-                    json.dumps(request_body) if request_body else None,
+                    self._encode_json_field(request_body),
                     response_status,
                     response_time_ms,
                     reason,
@@ -218,7 +218,12 @@ class AuditLogger:
                 params.extend([limit, offset])
 
                 rows = await conn.fetch(query, *params)
-                return [dict(row) for row in rows]
+                normalized: list[dict] = []
+                for row in rows:
+                    item = dict(row)
+                    item["request_body"] = self._decode_json_field(item.get("request_body"))
+                    normalized.append(item)
+                return normalized
         except Exception as e:
             logger.error(f"Failed to query audit log: {e}")
             return []
@@ -417,7 +422,7 @@ class AuditLogger:
                     response_status,
                     response_time_ms,
                     reason,
-                    json.dumps(attributes or {}),
+                    self._encode_json_field(attributes or {}),
                 )
         except Exception as exc:
             logger.error(f"Failed to write gateway event: {exc}")
@@ -452,10 +457,43 @@ class AuditLogger:
                 params.extend([limit, offset])
 
                 rows = await conn.fetch(query, *params)
-                return [dict(row) for row in rows]
+                normalized: List[Dict[str, Any]] = []
+                for row in rows:
+                    item = dict(row)
+                    item["attributes"] = self._decode_json_field(item.get("attributes"))
+                    normalized.append(item)
+                return normalized
         except Exception as exc:
             logger.error(f"Failed to query gateway events: {exc}")
             return []
+
+    def _decode_json_field(self, value: Any) -> Any:
+        """Decode JSON-like string fields for backward-compatible reads."""
+        if value is None:
+            return None
+        if isinstance(value, (dict, list)):
+            return value
+        if isinstance(value, str):
+            raw = value.strip()
+            if (raw.startswith("{") and raw.endswith("}")) or (
+                raw.startswith("[") and raw.endswith("]")
+            ):
+                try:
+                    return json.loads(raw)
+                except Exception:
+                    return value
+        return value
+
+    def _encode_json_field(self, value: Any) -> Optional[str]:
+        """Encode dict/list payloads for asyncpg JSON/JSONB parameters."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        try:
+            return json.dumps(value, ensure_ascii=True)
+        except Exception:
+            return json.dumps(str(value), ensure_ascii=True)
 
 
 # Global audit logger instance
