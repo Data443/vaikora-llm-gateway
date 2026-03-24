@@ -15,6 +15,7 @@ from loguru import logger
 
 from gateway.core.config import settings
 from gateway.api.auth import require_admin_auth
+from gateway.integrations.audit import audit_logger
 from gateway.policy.store import policy_store
 
 
@@ -97,6 +98,34 @@ class EntitlementsUpdateRequest(BaseModel):
     limits: Optional[Dict[str, Any]] = None
     changed_by: Optional[str] = "admin"
     change_note: Optional[str] = "entitlement update"
+
+
+class InteractionReviewRequest(BaseModel):
+    """Interaction review update payload."""
+    reviewed_by: Optional[str] = "admin"
+    reason: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class InteractionReviewRecord(BaseModel):
+    """Interaction review record."""
+    request_id: str
+    review_status: str
+    reviewed_at: Optional[datetime] = None
+    reviewed_by: Optional[str] = None
+    reason: Optional[str] = None
+    source_event_id: Optional[int] = None
+    source_decision: Optional[str] = None
+    source_risk_score: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class InteractionReviewResponse(BaseModel):
+    """Interaction review response."""
+    success: bool
+    message: str
+    request_id: str
+    review: InteractionReviewRecord
 
 
 def _resolve_action(request: PolicyUpdate) -> Optional[str]:
@@ -336,6 +365,98 @@ async def update_entitlements(request: EntitlementsUpdateRequest) -> Entitlement
         message="Entitlements updated",
         entitlements=entitlements,
         version=version,
+    )
+
+
+async def _set_interaction_review(
+    request_id: str,
+    review_status: str,
+    payload: InteractionReviewRequest,
+) -> InteractionReviewResponse:
+    """Create/update interaction review decision for a gateway request id."""
+    normalized_status = review_status.upper()
+    if normalized_status not in {"APPROVED", "BLOCKED"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid interaction review status: {review_status}",
+        )
+
+    if not audit_logger.connected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Interaction review store is not available",
+        )
+
+    source_event = await audit_logger.get_latest_gateway_event_by_request_id(request_id)
+    if not source_event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No gateway event found for request_id '{request_id}'",
+        )
+
+    review = await audit_logger.upsert_interaction_review(
+        request_id=request_id,
+        review_status=normalized_status,
+        reviewed_by=payload.reviewed_by or "admin",
+        reason=payload.reason,
+        source_event_id=source_event.get("id"),
+        source_decision=source_event.get("decision"),
+        source_risk_score=source_event.get("risk_score"),
+        metadata=payload.metadata or {},
+    )
+    if not review:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to persist interaction review for request_id '{request_id}'",
+        )
+
+    return InteractionReviewResponse(
+        success=True,
+        message=f"Interaction '{request_id}' marked as {normalized_status}",
+        request_id=request_id,
+        review=InteractionReviewRecord(**review),
+    )
+
+
+@admin_router.post("/interactions/{request_id}/approve", response_model=InteractionReviewResponse)
+async def approve_interaction(
+    request_id: str,
+    payload: InteractionReviewRequest,
+) -> InteractionReviewResponse:
+    """Mark an interaction as approved."""
+    return await _set_interaction_review(request_id, "APPROVED", payload)
+
+
+@admin_router.post("/interactions/{request_id}/block", response_model=InteractionReviewResponse)
+async def block_interaction(
+    request_id: str,
+    payload: InteractionReviewRequest,
+) -> InteractionReviewResponse:
+    """Mark an interaction as blocked."""
+    return await _set_interaction_review(request_id, "BLOCKED", payload)
+
+
+@admin_router.get("/interactions/{request_id}", response_model=InteractionReviewResponse)
+async def get_interaction_review(request_id: str) -> InteractionReviewResponse:
+    """Get interaction review status by request id."""
+    if not audit_logger.connected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Interaction review store is not available",
+        )
+
+    review = await audit_logger.get_interaction_review(request_id)
+    if not review:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No interaction review found for request_id '{request_id}'",
+        )
+
+    return InteractionReviewResponse(
+        success=True,
+        message=f"Interaction review for '{request_id}'",
+        request_id=request_id,
+        review=InteractionReviewRecord(**review),
     )
 
 

@@ -167,4 +167,28 @@ fi
 run_curl_with_status "Audit Log Query" curl "http://localhost:8000/audit/log?limit=3"
 run_curl_with_status "Gateway Event Query" curl "http://localhost:8000/audit/events?limit=5"
 
+LATEST_REQUEST_ID="$(curl -s http://localhost:8000/audit/events?limit=1 | python -c 'import json,sys; raw=sys.stdin.read().strip() or "{}"; 
+try:
+    payload=json.loads(raw)
+except Exception:
+    payload={}
+events=payload.get("events") or []
+print(events[0].get("request_id","") if events and isinstance(events[0],dict) else "")')"
+
+if [ -n "$LATEST_REQUEST_ID" ]; then
+  run_curl_with_status "Approve Interaction Review" curl "${ADMIN_HEADER_ARGS[@]}" -X POST "http://localhost:8000/admin/interactions/${LATEST_REQUEST_ID}/approve" \
+    -H "Content-Type: application/json" \
+    -d '{"reviewed_by":"phase2_verify","reason":"approved during verification","metadata":{"source":"phase2_verify"}}'
+
+  run_curl_with_status "Block Interaction Review (status update)" curl "${ADMIN_HEADER_ARGS[@]}" -X POST "http://localhost:8000/admin/interactions/${LATEST_REQUEST_ID}/block" \
+    -H "Content-Type: application/json" \
+    -d '{"reviewed_by":"phase2_verify","reason":"blocked during verification","metadata":{"source":"phase2_verify"}}'
+
+  run_curl_with_status "Get Interaction Review" curl "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/admin/interactions/${LATEST_REQUEST_ID}"
+else
+  section "Interaction Review Checks"
+  echo "Skipped (could not resolve a recent request_id from /audit/events)"
+  echo ""
+fi
+
 section "Done"

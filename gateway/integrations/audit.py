@@ -132,6 +132,23 @@ class AuditLogger:
                     ON llm_gateway_events(request_id);
                 CREATE INDEX IF NOT EXISTS idx_gateway_events_decision
                     ON llm_gateway_events(decision);
+
+                CREATE TABLE IF NOT EXISTS interaction_reviews (
+                    id BIGSERIAL PRIMARY KEY,
+                    request_id TEXT NOT NULL UNIQUE,
+                    review_status VARCHAR(20) NOT NULL,
+                    reviewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    reviewed_by TEXT,
+                    reason TEXT,
+                    source_event_id BIGINT,
+                    source_decision VARCHAR(20),
+                    source_risk_score INTEGER,
+                    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    CONSTRAINT valid_review_status CHECK (review_status IN ('APPROVED', 'BLOCKED'))
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_interaction_reviews_reviewed_at
+                    ON interaction_reviews(reviewed_at DESC);
             """)
             logger.info("Audit log table verified")
 
@@ -466,6 +483,119 @@ class AuditLogger:
         except Exception as exc:
             logger.error(f"Failed to query gateway events: {exc}")
             return []
+
+    async def get_latest_gateway_event_by_request_id(
+        self,
+        request_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Get the most recent gateway event row for a request id."""
+        if not self.connected:
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT *
+                    FROM llm_gateway_events
+                    WHERE request_id = $1
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                    """,
+                    request_id,
+                )
+                if not row:
+                    return None
+                item = dict(row)
+                item["attributes"] = self._decode_json_field(item.get("attributes"))
+                return item
+        except Exception as exc:
+            logger.error(f"Failed to fetch gateway event by request_id={request_id}: {exc}")
+            return None
+
+    async def upsert_interaction_review(
+        self,
+        request_id: str,
+        review_status: str,
+        reviewed_by: str = "admin",
+        reason: Optional[str] = None,
+        source_event_id: Optional[int] = None,
+        source_decision: Optional[str] = None,
+        source_risk_score: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Create or update interaction review status for a request id."""
+        if not self.connected:
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO interaction_reviews (
+                        request_id, review_status, reviewed_by, reason,
+                        source_event_id, source_decision, source_risk_score, metadata
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8::jsonb
+                    )
+                    ON CONFLICT (request_id)
+                    DO UPDATE SET
+                        review_status = EXCLUDED.review_status,
+                        reviewed_at = NOW(),
+                        reviewed_by = EXCLUDED.reviewed_by,
+                        reason = EXCLUDED.reason,
+                        source_event_id = EXCLUDED.source_event_id,
+                        source_decision = EXCLUDED.source_decision,
+                        source_risk_score = EXCLUDED.source_risk_score,
+                        metadata = EXCLUDED.metadata
+                    RETURNING
+                        request_id, review_status, reviewed_at, reviewed_by, reason,
+                        source_event_id, source_decision, source_risk_score, metadata
+                    """,
+                    request_id,
+                    review_status,
+                    reviewed_by,
+                    reason,
+                    source_event_id,
+                    source_decision,
+                    source_risk_score,
+                    self._encode_json_field(metadata or {}),
+                )
+                if not row:
+                    return None
+                item = dict(row)
+                item["metadata"] = self._decode_json_field(item.get("metadata")) or {}
+                return item
+        except Exception as exc:
+            logger.error(f"Failed to upsert interaction review for request_id={request_id}: {exc}")
+            return None
+
+    async def get_interaction_review(
+        self,
+        request_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch interaction review status by request id."""
+        if not self.connected:
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT
+                        request_id, review_status, reviewed_at, reviewed_by, reason,
+                        source_event_id, source_decision, source_risk_score, metadata
+                    FROM interaction_reviews
+                    WHERE request_id = $1
+                    LIMIT 1
+                    """,
+                    request_id,
+                )
+                if not row:
+                    return None
+                item = dict(row)
+                item["metadata"] = self._decode_json_field(item.get("metadata")) or {}
+                return item
+        except Exception as exc:
+            logger.error(f"Failed to fetch interaction review for request_id={request_id}: {exc}")
+            return None
 
     def _decode_json_field(self, value: Any) -> Any:
         """Decode JSON-like string fields for backward-compatible reads."""

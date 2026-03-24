@@ -122,7 +122,19 @@ This verifies:
 - entitlement update and provider gating behavior
 - optional Anthropic/Gemini/OpenRouter checks (if keys are configured)
 - structured gateway event query endpoint
+- interaction approve/block workflow (`/admin/interactions/{request_id}`)
 - full test suite
+
+**Client-Facing Verification Report (Single Command)**
+
+```bash
+bash documents/setup_and_run/generate_client_report.sh
+```
+
+Output:
+- markdown report: `documents/reports/client_exec_readout_YYYYMMDD_HHMMSS.md`
+- raw run artifacts: `documents/reports/artifacts_YYYYMMDD_HHMMSS/`
+- report now embeds full raw check outputs (including LLM proxy response bodies)
 
 ---
 
@@ -251,6 +263,9 @@ Admin:
 | `POST /admin/policies/{name}/rollback` | Rollback to previous policy version |
 | `GET /admin/entitlements` | Get entitlement configuration |
 | `PUT /admin/entitlements` | Update entitlement configuration |
+| `POST /admin/interactions/{request_id}/approve` | Mark interaction as approved |
+| `POST /admin/interactions/{request_id}/block` | Mark interaction as blocked |
+| `GET /admin/interactions/{request_id}` | Get interaction review status |
 | `DELETE /admin/policies/{name}` | Delete a policy |
 | `POST /admin/policies/reset` | Reset all policies |
 
