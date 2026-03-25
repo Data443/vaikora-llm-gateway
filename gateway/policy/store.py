@@ -33,6 +33,11 @@ DEFAULT_POLICIES: Dict[str, Dict[str, Any]] = {
         "enabled": True,
         "action_on_detect": "BLOCK",
     },
+    "semantic_detection": {
+        "enabled": False,
+        "action_on_detect": "LOG_ONLY",
+        "severity_threshold": "MEDIUM",
+    },
     "jwt_auth": {
         "enabled": False,
     },

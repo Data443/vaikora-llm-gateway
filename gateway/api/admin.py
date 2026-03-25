@@ -279,6 +279,24 @@ async def update_injection_policy(request: PolicyUpdate) -> PolicyResponse:
     return await _update_policy("injection_detection", request, "Injection detection policy updated")
 
 
+@admin_router.get("/policies/semantic", response_model=PolicyResponse)
+async def get_semantic_policy() -> PolicyResponse:
+    """Get semantic detection policy."""
+    policy, version = await policy_store.get_policy_with_version("semantic_detection")
+    return PolicyResponse(
+        success=True,
+        message="Semantic detection policy",
+        policy=_redact_sensitive(policy),
+        version=version,
+    )
+
+
+@admin_router.put("/policies/semantic", response_model=PolicyResponse)
+async def update_semantic_policy(request: PolicyUpdate) -> PolicyResponse:
+    """Update semantic detection policy."""
+    return await _update_policy("semantic_detection", request, "Semantic detection policy updated")
+
+
 @admin_router.get("/policies/jwt", response_model=PolicyResponse)
 async def get_jwt_policy() -> PolicyResponse:
     """Get JWT authentication policy."""

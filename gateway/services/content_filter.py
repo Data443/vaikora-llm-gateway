@@ -14,6 +14,7 @@ from loguru import logger
 from gateway.core.config import settings
 from gateway.api.admin import get_policy
 from gateway.policy.store import policy_store
+from gateway.services.semantic_detector import semantic_detector
 
 
 class SecurityAction(str, Enum):
@@ -165,6 +166,7 @@ class ContentFilter:
             "pii_detection": "pii_detection",
             "jailbreak_detection": "jailbreak_detection",
             "injection_detection": "injection_detection",
+            "semantic_detection": "semantic_detection",
         }
         policy = get_policy(name)
         module_name = module_map.get(name)
@@ -382,6 +384,7 @@ class ContentFilter:
         pii_policy = self._get_policy_config("pii_detection")
         jailbreak_policy = self._get_policy_config("jailbreak_detection")
         injection_policy = self._get_policy_config("injection_detection")
+        semantic_policy = self._get_policy_config("semantic_detection")
 
         # Check for PII
         pii_detections = self.check_pii(text) if pii_policy["enabled"] else []
@@ -392,8 +395,16 @@ class ContentFilter:
         # Check for injection attempts
         injection_detections = self.check_injection_attempts(text) if injection_policy["enabled"] else []
 
+        # Check for semantic abuse intent
+        semantic_detections = semantic_detector.detect(text) if semantic_policy["enabled"] else []
+
         # Combine all detections
-        all_detections = pii_detections + jailbreak_detections + injection_detections
+        all_detections = (
+            pii_detections
+            + jailbreak_detections
+            + injection_detections
+            + semantic_detections
+        )
 
         if not all_detections:
             return {
@@ -409,6 +420,8 @@ class ContentFilter:
                 policy = jailbreak_policy
             elif detection["type"] == "INJECTION_ATTEMPT":
                 policy = injection_policy
+            elif detection["type"].startswith("SEMANTIC_"):
+                policy = semantic_policy
             else:
                 policy = pii_policy
 
@@ -427,6 +440,7 @@ class ContentFilter:
         pii_count = len(pii_detections)
         jailbreak_count = len(jailbreak_detections)
         injection_count = len(injection_detections)
+        semantic_count = len(semantic_detections)
         total_count = len(all_detections)
 
         # Determine action
@@ -439,7 +453,10 @@ class ContentFilter:
 
         if "BLOCK" in actions:
             action = SecurityAction.BLOCK
-            reason = f"Block: {jailbreak_count} jailbreak, {injection_count} injection, {pii_count} PII detected"
+            reason = (
+                f"Block: {jailbreak_count} jailbreak, {injection_count} injection, "
+                f"{semantic_count} semantic, {pii_count} PII detected"
+            )
         elif "CONSTRAIN" in actions:
             action = SecurityAction.CONSTRAIN
             reason = f"Constrain: {total_count} security issues detected"
@@ -458,6 +475,7 @@ class ContentFilter:
                 "pii": pii_count,
                 "jailbreak": jailbreak_count,
                 "injection": injection_count,
+                "semantic": semantic_count,
                 "total": total_count
             }
         }
