@@ -6,9 +6,9 @@ Production-ready LLM reverse-proxy security gateway. The gateway intercepts ever
 
 **Status**
 - Phase 1: Production-ready prototype complete
-- Phase 2 production track: provider adapters + admin auth + entitlement limits implemented
-- Test suite: 76 tests passing
-- End-to-end verification: OpenAI + Cyren IPRep/URLF confirmed
+- Phase 2 implementation scope in this repo: verified (policy lifecycle, entitlements, content controls, telemetry, managed-agent governance)
+- Test suite: 78 tests passing
+- End-to-end verification: OpenAI + Cyren IPRep/URLF confirmed, including managed-agent proxy path
 
 ---
 
@@ -43,22 +43,83 @@ Production-ready LLM reverse-proxy security gateway. The gateway intercepts ever
 
 **Architecture (High Level)**
 
-```
-Client / AI Agent
-        |
-        v
-+-------------------------------------------+
-| Data443 LLM Security Gateway              |
-|  - JWT Auth (optional)                    |
-|  - Content Filter (PII/Jailbreak/Inject)  |
-|  - Policy Engine (ALLOW/BLOCK/CONSTRAIN)  |
-|  - Provider Router (OpenAI/Claude/Gemini) |
-|  - Cache (L1/L2)                          |
-|  - Audit Log                              |
-+-------------------------------------------+
-        |
-        v
-Target LLM Endpoint (OpenAI/Claude/Gemini/etc.)
+Client diagram source:
+`documents/shared-diagram-from-client/diagram.png`
+
+![Client High-Level Architecture](documents/shared-diagram-from-client/diagram.png)
+
+Diagram-aligned architecture summary:
+- `Control (Vaikora)` is the control plane for admin/governance:
+  - Agent management (`create/wrap/list/get`)
+  - Interaction governance (`approve/block/review`)
+  - Audit visibility (`/audit/log`, `/audit/events`, `/audit/metrics*`)
+  - Policy/entitlement management (`/admin/policies/*`, `/admin/entitlements`)
+- `Agents` are managed entities with optional A2A links and reviewable interactions.
+- `Enforcement` is the runtime gateway plane:
+  - LLM proxy ingress (`/v1/chat/completions`, `/agents/{agent_id}/v1/chat/completions`)
+  - Payload validation and deterministic controls:
+    - PII module
+    - Policy module (ALLOW/BLOCK/CONSTRAIN)
+    - Threat detection modules (jailbreak/injection/semantic/domain/email)
+  - Audit and telemetry emission for every decision
+- `Providers` are upstream model targets via adapter/router:
+  - OpenAI
+  - Anthropic
+  - Gemini
+  - OpenRouter
+
+Primary runtime flow:
+1. Client/agent sends request to gateway.
+2. Gateway applies auth, entitlements, content checks, and deterministic policy.
+3. If allowed, gateway routes to selected provider through adapter normalization.
+4. Response is normalized, filtered, audited, and returned.
+5. Control plane can update policies/entitlements and review interactions without restart.
+
+```mermaid
+flowchart LR
+    subgraph CONTROL["Control (Vaikora)"]
+      AM["Agent Mgmt"]
+      IM["Interaction Mgmt"]
+      AU["Audit"]
+      PE["Policy/Entitlement Mgmt"]
+    end
+
+    subgraph AGENTS["Agents"]
+      A1["Agent 1"]
+      A2["Agent 2"]
+      A3["Agent 3"]
+      A1 -. A2A .-> A2
+      A2 -. A2A .-> A3
+    end
+
+    subgraph ENF["Enforcement (Gateway Runtime)"]
+      LP["LLM Proxy"]
+      PII["PII"]
+      POL["Policy"]
+      TD["Threat Detection"]
+      LP --> PII
+      LP --> POL
+      LP --> TD
+    end
+
+    subgraph PROVIDERS["Model Providers"]
+      OR["OpenRouter"]
+      OAI["OpenAI"]
+      ANT["Anthropic"]
+      GEM["Gemini"]
+    end
+
+    AM -. create/wrap .-> A1
+    IM -. accept/block/approval .-> A1
+    A1 --> LP
+    A2 --> LP
+    A3 --> LP
+    LP --> OR
+    LP --> OAI
+    LP --> ANT
+    LP --> GEM
+    LP -. audit/events .-> AU
+    PE --> LP
 ```
 
 ---
