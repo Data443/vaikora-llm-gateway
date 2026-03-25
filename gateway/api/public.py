@@ -12,6 +12,7 @@ from loguru import logger
 from gateway.core.types import Decision
 from gateway.api.auth import require_admin_auth
 from gateway.integrations.audit import audit_logger
+from gateway.integrations.telemetry import telemetry_metrics
 
 
 public_router = APIRouter()
@@ -40,6 +41,7 @@ async def root() -> Dict[str, Any]:
             "proxy": "/{path}",
             "audit": "/audit/log",
             "events": "/audit/events",
+            "metrics": "/audit/metrics",
         },
     }
 
@@ -117,6 +119,17 @@ async def get_gateway_events(
         "limit": limit,
         "offset": offset,
         "events": events,
+    }))
+
+
+@public_router.get("/audit/metrics")
+async def get_gateway_metrics(request: Request) -> JSONResponse:
+    """Get process-local telemetry counters and latency aggregates."""
+    await require_admin_auth(request)
+    return JSONResponse(content=jsonable_encoder({
+        "success": True,
+        "message": "Gateway telemetry metrics",
+        "metrics": telemetry_metrics.snapshot(),
     }))
 
 

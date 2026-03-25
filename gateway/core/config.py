@@ -65,6 +65,14 @@ class Settings(BaseSettings):
         default=2,
         description="Number of retry attempts for Cyren API"
     )
+    ctas_url: str = Field(
+        default="https://try-now-antispam.data443.io/ctasd/ClassifyMessage_Inline",
+        description="Cyren CTAS email classification API endpoint",
+    )
+    ctas_timeout: float = Field(
+        default=5.0,
+        description="Cyren CTAS timeout in seconds",
+    )
 
     # Redis Configuration (L1/L2 Caching)
     redis_host: str = Field(default="localhost", description="Redis host")

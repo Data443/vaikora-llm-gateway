@@ -7,7 +7,7 @@ Production-ready LLM reverse-proxy security gateway. The gateway intercepts ever
 **Status**
 - Phase 1: Production-ready prototype complete
 - Phase 2 production track: provider adapters + admin auth + entitlement limits implemented
-- Test suite: 51 tests passing
+- Test suite: 57 tests passing
 - End-to-end verification: OpenAI + Cyren IPRep/URLF confirmed
 
 ---
@@ -17,6 +17,7 @@ Production-ready LLM reverse-proxy security gateway. The gateway intercepts ever
 - Optional JWT authentication on inbound requests
 - PII detection (SSN, email, phone, credit card, IP, passport, bank account)
 - Malicious prompt detection (jailbreak and injection patterns)
+- Semantic abuse detection module (entitlement-gated)
 - Data443 Cyren IP reputation and URL classification
 - Deterministic policy engine (no LLM in the decision path)
 - L1 in-memory + L2 Redis caching for Cyren lookups
@@ -121,6 +122,7 @@ bash documents/setup_and_run/phase2_verify.sh
 This verifies:
 - policy versioning and rollback endpoints
 - entitlement update and provider gating behavior
+- semantic detector entitlement/policy enforcement path
 - optional Anthropic/Gemini/OpenRouter checks (if keys are configured)
 - structured gateway event query endpoint
 - interaction approve/block workflow (`/admin/interactions/{request_id}`)
@@ -267,6 +269,8 @@ Admin:
 | `PUT /admin/policies/jailbreak` | Update jailbreak policy |
 | `GET /admin/policies/injection` | Get injection policy |
 | `PUT /admin/policies/injection` | Update injection policy |
+| `GET /admin/policies/semantic` | Get semantic detection policy |
+| `PUT /admin/policies/semantic` | Update semantic detection policy |
 | `GET /admin/policies/jwt` | Get JWT auth policy |
 | `PUT /admin/policies/jwt` | Update JWT auth policy |
 | `GET /admin/policies/{name}/versions` | List policy versions |

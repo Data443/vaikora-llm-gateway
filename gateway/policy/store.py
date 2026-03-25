@@ -38,6 +38,16 @@ DEFAULT_POLICIES: Dict[str, Dict[str, Any]] = {
         "action_on_detect": "LOG_ONLY",
         "severity_threshold": "MEDIUM",
     },
+    "domain_risk_scoring": {
+        "enabled": False,
+        "action_on_detect": "LOG_ONLY",
+        "severity_threshold": "MEDIUM",
+    },
+    "email_classification": {
+        "enabled": False,
+        "action_on_detect": "LOG_ONLY",
+        "severity_threshold": "MEDIUM",
+    },
     "jwt_auth": {
         "enabled": False,
     },

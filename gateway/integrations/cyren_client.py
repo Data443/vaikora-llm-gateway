@@ -8,6 +8,7 @@ Includes circuit breaker for fault tolerance.
 from typing import Optional, Dict, Any
 import re
 import asyncio
+import time
 
 import httpx
 from loguru import logger
@@ -83,7 +84,7 @@ class CircuitBreaker:
     def record_failure(self) -> None:
         """Record a failed call."""
         self.failure_count += 1
-        self.last_failure_time = asyncio.get_event_loop().time()
+        self.last_failure_time = time.monotonic()
 
         if self.failure_count >= self.failure_threshold:
             self.state = "open"
@@ -95,7 +96,7 @@ class CircuitBreaker:
             return True
 
         if self.state == "open":
-            if asyncio.get_event_loop().time() - self.last_failure_time > self.recovery_timeout:
+            if time.monotonic() - self.last_failure_time > self.recovery_timeout:
                 self.state = "half-open"
                 logger.info("Circuit breaker half-open, allowing one request")
                 return True

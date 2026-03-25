@@ -1,3 +1,29 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Generated verification outputs
 phase2_gateway_tail.log
 phase2_pytest_output.txt
 phase2_verify_output.txt
+documents/reports/

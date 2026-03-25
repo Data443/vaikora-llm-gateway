@@ -297,6 +297,46 @@ async def update_semantic_policy(request: PolicyUpdate) -> PolicyResponse:
     return await _update_policy("semantic_detection", request, "Semantic detection policy updated")
 
 
+@admin_router.get("/policies/domain-risk", response_model=PolicyResponse)
+async def get_domain_risk_policy() -> PolicyResponse:
+    """Get domain risk scoring policy."""
+    policy, version = await policy_store.get_policy_with_version("domain_risk_scoring")
+    return PolicyResponse(
+        success=True,
+        message="Domain risk scoring policy",
+        policy=_redact_sensitive(policy),
+        version=version,
+    )
+
+
+@admin_router.put("/policies/domain-risk", response_model=PolicyResponse)
+async def update_domain_risk_policy(request: PolicyUpdate) -> PolicyResponse:
+    """Update domain risk scoring policy."""
+    return await _update_policy("domain_risk_scoring", request, "Domain risk scoring policy updated")
+
+
+@admin_router.get("/policies/email-classification", response_model=PolicyResponse)
+async def get_email_classification_policy() -> PolicyResponse:
+    """Get email classification policy."""
+    policy, version = await policy_store.get_policy_with_version("email_classification")
+    return PolicyResponse(
+        success=True,
+        message="Email classification policy",
+        policy=_redact_sensitive(policy),
+        version=version,
+    )
+
+
+@admin_router.put("/policies/email-classification", response_model=PolicyResponse)
+async def update_email_classification_policy(request: PolicyUpdate) -> PolicyResponse:
+    """Update email classification policy."""
+    return await _update_policy(
+        "email_classification",
+        request,
+        "Email classification policy updated",
+    )
+
+
 @admin_router.get("/policies/jwt", response_model=PolicyResponse)
 async def get_jwt_policy() -> PolicyResponse:
     """Get JWT authentication policy."""

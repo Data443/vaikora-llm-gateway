@@ -15,6 +15,8 @@ from gateway.core.config import settings
 from gateway.api.admin import get_policy
 from gateway.policy.store import policy_store
 from gateway.services.semantic_detector import semantic_detector
+from gateway.services.domain_risk_detector import domain_risk_detector
+from gateway.services.email_classifier import email_classifier
 
 
 class SecurityAction(str, Enum):
@@ -167,6 +169,8 @@ class ContentFilter:
             "jailbreak_detection": "jailbreak_detection",
             "injection_detection": "injection_detection",
             "semantic_detection": "semantic_detection",
+            "domain_risk_scoring": "domain_risk_scoring",
+            "email_classification": "email_classification",
         }
         policy = get_policy(name)
         module_name = module_map.get(name)
@@ -362,6 +366,20 @@ class ContentFilter:
 
         return detections
 
+    def check_domain_risk(self, text: str) -> List[Dict[str, Any]]:
+        """Check text for risky domains/URLs."""
+        detections = domain_risk_detector.detect(text)
+        if detections:
+            logger.warning(f"Domain-risk detections: {len(detections)}")
+        return detections
+
+    def check_email_classification(self, text: str) -> List[Dict[str, Any]]:
+        """Classify phishing-like email intent in prompt text."""
+        detections = email_classifier.classify(text)
+        if detections:
+            logger.warning(f"Email-classification detections: {len(detections)}")
+        return detections
+
     def check_request(self, content: Optional[Any] = None) -> Dict[str, Any]:
         """
         Check request content for security issues.
@@ -385,6 +403,8 @@ class ContentFilter:
         jailbreak_policy = self._get_policy_config("jailbreak_detection")
         injection_policy = self._get_policy_config("injection_detection")
         semantic_policy = self._get_policy_config("semantic_detection")
+        domain_policy = self._get_policy_config("domain_risk_scoring")
+        email_policy = self._get_policy_config("email_classification")
 
         # Check for PII
         pii_detections = self.check_pii(text) if pii_policy["enabled"] else []
@@ -398,12 +418,20 @@ class ContentFilter:
         # Check for semantic abuse intent
         semantic_detections = semantic_detector.detect(text) if semantic_policy["enabled"] else []
 
+        # Check for risky domains
+        domain_detections = self.check_domain_risk(text) if domain_policy["enabled"] else []
+
+        # Check for phishing/bulk email risk intents
+        email_detections = self.check_email_classification(text) if email_policy["enabled"] else []
+
         # Combine all detections
         all_detections = (
             pii_detections
             + jailbreak_detections
             + injection_detections
             + semantic_detections
+            + domain_detections
+            + email_detections
         )
 
         if not all_detections:
@@ -422,6 +450,10 @@ class ContentFilter:
                 policy = injection_policy
             elif detection["type"].startswith("SEMANTIC_"):
                 policy = semantic_policy
+            elif detection["type"] == "DOMAIN_RISK":
+                policy = domain_policy
+            elif detection["type"] == "EMAIL_CLASSIFICATION_RISK":
+                policy = email_policy
             else:
                 policy = pii_policy
 
@@ -441,6 +473,8 @@ class ContentFilter:
         jailbreak_count = len(jailbreak_detections)
         injection_count = len(injection_detections)
         semantic_count = len(semantic_detections)
+        domain_count = len(domain_detections)
+        email_count = len(email_detections)
         total_count = len(all_detections)
 
         # Determine action
@@ -455,7 +489,8 @@ class ContentFilter:
             action = SecurityAction.BLOCK
             reason = (
                 f"Block: {jailbreak_count} jailbreak, {injection_count} injection, "
-                f"{semantic_count} semantic, {pii_count} PII detected"
+                f"{semantic_count} semantic, {domain_count} domain, "
+                f"{email_count} email, {pii_count} PII detected"
             )
         elif "CONSTRAIN" in actions:
             action = SecurityAction.CONSTRAIN
@@ -476,6 +511,8 @@ class ContentFilter:
                 "jailbreak": jailbreak_count,
                 "injection": injection_count,
                 "semantic": semantic_count,
+                "domain_risk": domain_count,
+                "email_classification": email_count,
                 "total": total_count
             }
         }

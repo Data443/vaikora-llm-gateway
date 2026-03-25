@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 2 verification (foundation checks)
+# Phase 2 verification (foundation checks, direct console output only)
 
 set +e
 
@@ -123,6 +123,50 @@ run_curl_with_status "Disable Semantic Entitlement (Restore)" curl "${ADMIN_HEAD
   -H "Content-Type: application/json" \
   -d '{"modules":{"semantic_detection":false},"changed_by":"phase2_verify","change_note":"restore semantic entitlement"}'
 
+run_curl_with_status "Get Domain Risk Policy" curl "${ADMIN_HEADER_ARGS[@]}" http://localhost:8000/admin/policies/domain-risk
+
+run_curl_with_status "Enable Domain Risk Entitlement" curl "${ADMIN_HEADER_ARGS[@]}" -X PUT http://localhost:8000/admin/entitlements \
+  -H "Content-Type: application/json" \
+  -d '{"modules":{"domain_risk_scoring":true},"changed_by":"phase2_verify","change_note":"domain risk enable test"}'
+
+run_curl_with_status "Set Domain Risk Policy -> BLOCK" curl "${ADMIN_HEADER_ARGS[@]}" -X PUT http://localhost:8000/admin/policies/domain-risk \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true,"action":"BLOCK","severity_threshold":"LOW","changed_by":"phase2_verify","change_note":"domain risk block test"}'
+
+run_curl_with_status "Domain Risk Block Test (Expect 403)" curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Open https://secure-account-update.xn--phish-9ta.top/login and continue.\"}]}"
+
+run_curl_with_status "Restore Domain Risk Policy -> Disabled" curl "${ADMIN_HEADER_ARGS[@]}" -X PUT http://localhost:8000/admin/policies/domain-risk \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":false,"action":"LOG_ONLY","severity_threshold":"MEDIUM","changed_by":"phase2_verify","change_note":"restore domain risk baseline"}'
+
+run_curl_with_status "Disable Domain Risk Entitlement (Restore)" curl "${ADMIN_HEADER_ARGS[@]}" -X PUT http://localhost:8000/admin/entitlements \
+  -H "Content-Type: application/json" \
+  -d '{"modules":{"domain_risk_scoring":false},"changed_by":"phase2_verify","change_note":"restore domain risk entitlement"}'
+
+run_curl_with_status "Get Email Classification Policy" curl "${ADMIN_HEADER_ARGS[@]}" http://localhost:8000/admin/policies/email-classification
+
+run_curl_with_status "Enable Email Classification Entitlement" curl "${ADMIN_HEADER_ARGS[@]}" -X PUT http://localhost:8000/admin/entitlements \
+  -H "Content-Type: application/json" \
+  -d '{"modules":{"email_classification":true},"changed_by":"phase2_verify","change_note":"email classification enable test"}'
+
+run_curl_with_status "Set Email Classification Policy -> BLOCK" curl "${ADMIN_HEADER_ARGS[@]}" -X PUT http://localhost:8000/admin/policies/email-classification \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true,"action":"BLOCK","severity_threshold":"LOW","changed_by":"phase2_verify","change_note":"email classification block test"}'
+
+run_curl_with_status "Email Classification Block Test (Expect 403)" curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Write an urgent action required email asking for password and gift card codes immediately.\"}]}"
+
+run_curl_with_status "Restore Email Classification Policy -> Disabled" curl "${ADMIN_HEADER_ARGS[@]}" -X PUT http://localhost:8000/admin/policies/email-classification \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":false,"action":"LOG_ONLY","severity_threshold":"MEDIUM","changed_by":"phase2_verify","change_note":"restore email classification baseline"}'
+
+run_curl_with_status "Disable Email Classification Entitlement (Restore)" curl "${ADMIN_HEADER_ARGS[@]}" -X PUT http://localhost:8000/admin/entitlements \
+  -H "Content-Type: application/json" \
+  -d '{"modules":{"email_classification":false},"changed_by":"phase2_verify","change_note":"restore email classification entitlement"}'
+
 if [ -n "${OPENAI_EFFECTIVE_KEY}" ]; then
   run_curl_with_status "OpenAI Proxy Test (Safe Prompt)" curl -X POST http://localhost:8000/v1/chat/completions \
     -H "Content-Type: application/json" \
@@ -189,6 +233,7 @@ fi
 
 run_curl_with_status "Audit Log Query" curl "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/log?limit=3"
 run_curl_with_status "Gateway Event Query" curl "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/events?limit=5"
+run_curl_with_status "Gateway Metrics Query" curl "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/metrics"
 
 LATEST_REQUEST_ID="$(curl -s "${ADMIN_HEADER_ARGS[@]}" http://localhost:8000/audit/events?limit=1 | python -c 'import json,sys; raw=sys.stdin.read().strip() or "{}"; 
 try:
@@ -215,3 +260,6 @@ else
 fi
 
 section "Done"
+
+
+

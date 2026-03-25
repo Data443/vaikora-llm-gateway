@@ -21,6 +21,7 @@ from gateway.core.types import Decision
 from gateway.services.policy_service import PolicyEngine, PolicyDecision
 from gateway.integrations.audit import audit_logger
 from gateway.integrations.cache import cache
+from gateway.integrations.telemetry import telemetry_metrics
 from gateway.services.jwt_auth import JWTAuth, get_current_user_from_request
 from gateway.services.content_filter import get_content_filter, SecurityAction
 from gateway.api.admin import get_policy
@@ -532,6 +533,13 @@ class ProxyHandler:
         attributes: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Persist structured event row for analytics and forensic use."""
+        telemetry_metrics.record_event(
+            decision=decision,
+            provider=provider_name,
+            response_time_ms=response_time_ms,
+            attributes=attributes or {},
+            reason=reason,
+        )
         await audit_logger.log_gateway_event(
             request_id=request_id,
             decision=decision,
