@@ -17,6 +17,32 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, description="Gateway port")
     workers: int = Field(default=1, description="Number of worker processes")
     log_level: str = Field(default="INFO", description="Logging level")
+    upstream_timeout_seconds: float = Field(
+        default=60.0,
+        description="Timeout in seconds for upstream LLM provider calls",
+    )
+
+    # CORS and proxy trust
+    cors_allowed_origins: str = Field(
+        default="http://localhost,http://127.0.0.1",
+        description="Comma-separated CORS allowed origins; use * only in controlled environments",
+    )
+    cors_allowed_methods: str = Field(
+        default="GET,POST,PUT,PATCH,DELETE,OPTIONS",
+        description="Comma-separated CORS allowed methods",
+    )
+    cors_allowed_headers: str = Field(
+        default="*",
+        description="Comma-separated CORS allowed headers",
+    )
+    cors_allow_credentials: bool = Field(
+        default=False,
+        description="Allow CORS credentials; requires explicit non-wildcard origins",
+    )
+    trust_proxy_headers: bool = Field(
+        default=False,
+        description="Trust X-Forwarded-For/X-Real-IP headers for client IP extraction",
+    )
 
     # Cyren API Configuration
     cyren_iprep_url: str = Field(

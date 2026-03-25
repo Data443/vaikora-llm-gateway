@@ -6,6 +6,7 @@ evaluates security policy, and forwards to target endpoint.
 """
 
 from contextlib import asynccontextmanager
+from typing import List
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,6 +63,11 @@ async def lifespan(app: FastAPI):
 
 configure_logging(settings.log_level)
 
+
+def _split_csv(value: str) -> List[str]:
+    """Split comma-separated configuration into a normalized list."""
+    return [item.strip() for item in value.split(",") if item.strip()]
+
 # Create FastAPI app
 app = FastAPI(
     title="Data443 LLM Security Gateway",
@@ -71,12 +77,25 @@ app = FastAPI(
 )
 
 # Add middleware
+cors_origins = _split_csv(settings.cors_allowed_origins)
+cors_methods = _split_csv(settings.cors_allowed_methods)
+cors_headers = _split_csv(settings.cors_allowed_headers)
+cors_allow_credentials = settings.cors_allow_credentials
+
+# Browsers reject wildcard origins with credentials, so force-safe behavior.
+if cors_allow_credentials and "*" in cors_origins:
+    logger.warning(
+        "CORS misconfiguration detected: CORS_ALLOW_CREDENTIALS=true with wildcard origin; "
+        "forcing allow_credentials=false"
+    )
+    cors_allow_credentials = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins or ["http://localhost", "http://127.0.0.1"],
+    allow_credentials=cors_allow_credentials,
+    allow_methods=cors_methods or ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=cors_headers or ["*"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -115,4 +134,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

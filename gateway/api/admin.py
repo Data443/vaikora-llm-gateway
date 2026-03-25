@@ -26,6 +26,10 @@ admin_router = APIRouter(
 )
 
 
+_REDACTED_VALUE = "***REDACTED***"
+_SENSITIVE_EXACT_KEYS = {"secret", "password", "api_key", "apikey", "token"}
+
+
 class PolicyUpdate(BaseModel):
     """Request to update a policy."""
     enabled: Optional[bool] = None
@@ -128,6 +132,35 @@ class InteractionReviewResponse(BaseModel):
     review: InteractionReviewRecord
 
 
+def _is_sensitive_key(key: str) -> bool:
+    """Detect whether a key should be redacted in API responses."""
+    normalized = key.lower()
+    if normalized in _SENSITIVE_EXACT_KEYS:
+        return True
+    return (
+        normalized.endswith("_secret")
+        or normalized.endswith("_password")
+        or normalized.endswith("_api_key")
+        or normalized.endswith("_token")
+    )
+
+
+def _redact_sensitive(data: Any) -> Any:
+    """Recursively redact secret-like keys from response payloads."""
+    if isinstance(data, dict):
+        redacted: Dict[str, Any] = {}
+        for key, value in data.items():
+            normalized = str(key).lower()
+            if _is_sensitive_key(normalized):
+                redacted[key] = _REDACTED_VALUE if value not in (None, "") else ""
+            else:
+                redacted[key] = _redact_sensitive(value)
+        return redacted
+    if isinstance(data, list):
+        return [_redact_sensitive(item) for item in data]
+    return data
+
+
 def _resolve_action(request: PolicyUpdate) -> Optional[str]:
     """Support both action and action_on_detect payload fields."""
     return request.action_on_detect or request.action
@@ -167,7 +200,7 @@ async def _update_policy(policy_name: str, request: PolicyUpdate, message: str) 
         return PolicyResponse(
             success=True,
             message=message,
-            policy=updated,
+            policy=_redact_sensitive(updated),
             version=version,
         )
     except Exception as exc:
@@ -181,7 +214,14 @@ async def _update_policy(policy_name: str, request: PolicyUpdate, message: str) 
 @admin_router.get("/policies", response_model=PolicyListResponse)
 async def list_policies() -> PolicyListResponse:
     """List all security policies."""
-    items = [PolicyListItem(**item) for item in policy_store.list_policies()]
+    items = [
+        PolicyListItem(
+            name=item["name"],
+            enabled=item["enabled"],
+            config=_redact_sensitive(item["config"]),
+        )
+        for item in policy_store.list_policies()
+    ]
     return PolicyListResponse(policies=items)
 
 
@@ -192,7 +232,7 @@ async def get_pii_policy() -> PolicyResponse:
     return PolicyResponse(
         success=True,
         message="PII detection policy",
-        policy=policy,
+        policy=_redact_sensitive(policy),
         version=version,
     )
 
@@ -210,7 +250,7 @@ async def get_jailbreak_policy() -> PolicyResponse:
     return PolicyResponse(
         success=True,
         message="Jailbreak detection policy",
-        policy=policy,
+        policy=_redact_sensitive(policy),
         version=version,
     )
 
@@ -228,7 +268,7 @@ async def get_injection_policy() -> PolicyResponse:
     return PolicyResponse(
         success=True,
         message="Injection detection policy",
-        policy=policy,
+        policy=_redact_sensitive(policy),
         version=version,
     )
 
@@ -254,7 +294,7 @@ async def get_jwt_policy() -> PolicyResponse:
     return PolicyResponse(
         success=True,
         message="JWT authentication policy",
-        policy=jwt_policy,
+        policy=_redact_sensitive(jwt_policy),
         version=version,
     )
 
@@ -272,7 +312,17 @@ async def get_policy_versions(policy_name: str, limit: int = 20) -> PolicyVersio
     return PolicyVersionsResponse(
         success=True,
         policy_name=policy_name,
-        versions=[PolicyVersionItem(**item) for item in versions],
+        versions=[
+            PolicyVersionItem(
+                policy_name=item["policy_name"],
+                version=item["version"],
+                config=_redact_sensitive(item.get("config", {})),
+                created_at=item.get("created_at"),
+                created_by=item.get("created_by"),
+                change_note=item.get("change_note"),
+            )
+            for item in versions
+        ],
     )
 
 
@@ -288,7 +338,7 @@ async def rollback_policy(policy_name: str, request: PolicyRollbackRequest) -> P
         return PolicyResponse(
             success=True,
             message=f"Policy '{policy_name}' rolled back to version {request.version}",
-            policy=policy,
+            policy=_redact_sensitive(policy),
             version=version,
         )
     except ValueError as exc:
@@ -312,7 +362,7 @@ async def delete_policy(policy_name: str) -> PolicyResponse:
         return PolicyResponse(
             success=True,
             message=f"Policy '{policy_name}' deleted",
-            policy=policy,
+            policy=_redact_sensitive(policy),
         )
     except KeyError:
         raise HTTPException(

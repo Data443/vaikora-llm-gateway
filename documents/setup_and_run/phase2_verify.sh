@@ -14,6 +14,7 @@ if [ -f "$ROOT_DIR/.env" ]; then
 fi
 
 MODEL="${LLM_MODEL:-gpt-4o-mini}"
+OPENAI_EFFECTIVE_KEY="${LLM_API_KEY:-${OPENAI_API_KEY:-}}"
 ADMIN_HEADER_ARGS=()
 
 if [[ "${ADMIN_AUTH_ENABLED,,}" == "true" ]]; then
@@ -100,13 +101,13 @@ run_curl_with_status "Re-enable OpenAI Provider Entitlement" curl "${ADMIN_HEADE
   -H "Content-Type: application/json" \
   -d '{"providers":{"openai":true},"changed_by":"phase2_verify","change_note":"restore provider access"}'
 
-if [ -n "${LLM_API_KEY:-}" ]; then
+if [ -n "${OPENAI_EFFECTIVE_KEY}" ]; then
   run_curl_with_status "OpenAI Proxy Test (Safe Prompt)" curl -X POST http://localhost:8000/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello\"}]}"
 else
   section "OpenAI Proxy Test"
-  echo "Skipped (LLM_API_KEY not set in .env)"
+  echo "Skipped (LLM_API_KEY/OPENAI_API_KEY not set in .env)"
   echo ""
 fi
 
@@ -164,10 +165,10 @@ else
   echo ""
 fi
 
-run_curl_with_status "Audit Log Query" curl "http://localhost:8000/audit/log?limit=3"
-run_curl_with_status "Gateway Event Query" curl "http://localhost:8000/audit/events?limit=5"
+run_curl_with_status "Audit Log Query" curl "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/log?limit=3"
+run_curl_with_status "Gateway Event Query" curl "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/events?limit=5"
 
-LATEST_REQUEST_ID="$(curl -s http://localhost:8000/audit/events?limit=1 | python -c 'import json,sys; raw=sys.stdin.read().strip() or "{}"; 
+LATEST_REQUEST_ID="$(curl -s "${ADMIN_HEADER_ARGS[@]}" http://localhost:8000/audit/events?limit=1 | python -c 'import json,sys; raw=sys.stdin.read().strip() or "{}"; 
 try:
     payload=json.loads(raw)
 except Exception:

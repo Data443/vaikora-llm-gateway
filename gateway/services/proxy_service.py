@@ -35,7 +35,7 @@ class ProxyHandler:
     def __init__(self, policy_engine: PolicyEngine):
         self.policy_engine = policy_engine
         self.llm_endpoint = settings.llm_endpoint.rstrip("/")
-        self.timeout = Timeout(60.0)
+        self.timeout = Timeout(settings.upstream_timeout_seconds)
         self.provider_router = ProviderRouter()
 
     async def handle_request(self, request: Request) -> Response:
@@ -73,8 +73,31 @@ class ProxyHandler:
         jwt_enabled = jwt_policy.get("enabled", settings.jwt_enabled)
         if jwt_enabled:
             try:
+                jwt_secret = str(jwt_policy.get("secret") or settings.jwt_secret or "").strip()
+                if not jwt_secret:
+                    reason = "JWT auth is enabled but JWT secret is not configured"
+                    await self._emit_gateway_event(
+                        request_id=request_id,
+                        decision="ERROR",
+                        request=request,
+                        request_body=request_body,
+                        model_name=model_name,
+                        provider_name=provider_name,
+                        org_id=org_id,
+                        user_id=user_id,
+                        response_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        reason=reason,
+                        attributes={"block_type": "auth_configuration"},
+                    )
+                    return self._json_error_response(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        message=reason,
+                        error_type="auth_configuration_error",
+                        code="jwt_secret_missing",
+                    )
+
                 jwt_auth = JWTAuth(
-                    secret=jwt_policy.get("secret") or settings.jwt_secret,
+                    secret=jwt_secret,
                     issuer=jwt_policy.get("issuer") or settings.jwt_issuer,
                     audience=jwt_policy.get("audience") or settings.jwt_audience,
                 )
@@ -473,7 +496,7 @@ class ProxyHandler:
             )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to reach provider endpoint: {str(exc)}",
+                detail="Failed to reach provider endpoint",
             ) from exc
 
     def _block_response(self, decision: PolicyDecision) -> Response:
@@ -675,7 +698,16 @@ class ProxyHandler:
     ) -> Dict[str, str]:
         """Build passthrough headers with provider-specific authentication defaults."""
         headers = dict(incoming_headers)
-        for h in ["host", "content-length", "transfer-encoding", "connection"]:
+        for h in [
+            "host",
+            "content-length",
+            "transfer-encoding",
+            "connection",
+            "x-admin-key",
+            "x-forwarded-for",
+            "x-real-ip",
+            "cf-connecting-ip",
+        ]:
             headers.pop(h, None)
 
         provider_key = self._provider_api_key(provider_name)
@@ -692,12 +724,13 @@ class ProxyHandler:
 
     def _get_client_ip(self, request: Request) -> str:
         """Extract client IP address from request."""
-        headers = request.headers
-        for header in ["x-forwarded-for", "x-real-ip", "cf-connecting-ip"]:
-            if header in headers:
-                ip = headers[header].split(",")[0].strip()
-                if ip:
-                    return ip
+        if settings.trust_proxy_headers:
+            headers = request.headers
+            for header in ["x-forwarded-for", "x-real-ip", "cf-connecting-ip"]:
+                if header in headers:
+                    ip = headers[header].split(",")[0].strip()
+                    if ip:
+                        return ip
         return request.client.host if request.client else "unknown"
 
     async def health_check(self) -> Dict[str, Any]:

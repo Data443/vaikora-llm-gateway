@@ -26,7 +26,8 @@ class JWTAuth:
         issuer: Optional[str] = None,
         audience: Optional[str] = None,
     ):
-        self.secret = secret or settings.jwt_secret or "default-secret-key-change-in-production"
+        configured_secret = secret if secret is not None else settings.jwt_secret
+        self.secret = (configured_secret or "").strip()
         self.algorithm = "HS256"
         self.issuer = issuer or settings.jwt_issuer
         self.audience = audience or settings.jwt_audience
@@ -46,6 +47,9 @@ class JWTAuth:
         Returns:
             JWT token string
         """
+        if not self.secret:
+            raise ValueError("JWT secret is not configured")
+
         claims = {
             "sub": user_id,
             "iss": self.issuer,
@@ -74,6 +78,10 @@ class JWTAuth:
         Returns:
             Decoded claims dict, or None if invalid
         """
+        if not self.secret:
+            logger.error("JWT verification requested but JWT secret is not configured")
+            return None
+
         try:
             payload = jwt.decode(
                 token,
@@ -97,6 +105,10 @@ class JWTAuth:
         Returns:
             Decoded claims dict, or None if invalid
         """
+        if not self.secret:
+            logger.error("JWT decode requested but JWT secret is not configured")
+            return None
+
         try:
             payload = jwt.decode(
                 token,
@@ -111,7 +123,7 @@ class JWTAuth:
 
 
 # JWT Bearer token scheme
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(

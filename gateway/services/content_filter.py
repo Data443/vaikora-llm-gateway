@@ -13,6 +13,7 @@ from loguru import logger
 
 from gateway.core.config import settings
 from gateway.api.admin import get_policy
+from gateway.policy.store import policy_store
 
 
 class SecurityAction(str, Enum):
@@ -48,16 +49,16 @@ class ContentFilter:
     )
 
     _PHONE_PATTERN_US = re.compile(
-        r'\b\+?1?[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}\b',
+        r'\b(?:\+1[-.\s]?)?(?:\(?[2-9]\d{2}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b',
         flags=re.IGNORECASE
     )
     _PHONE_PATTERN_INTL = re.compile(
-        r'\b\+?[0-9]{1,3}[-.\s]?[(]?[0-9]{1,4}[)\s]?[-.\s]?[0-9]{1,4}[-.\s]?[0-9]{1,4}\b',
+        r'(?<!\w)\+(?:\d[-.\s]?){8,15}\d(?!\w)',
         flags=re.IGNORECASE
     )
 
     _CREDIT_CARD_PATTERN = re.compile(
-        r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|6(?:011|5[0-9]{0,2})[0-9]{12}|3(?:0[0-5][0-9]{11}|7(?:0[0-2][0-9]{11}))[0-9]{3}(?:[0-9]{3})?)\b',
+        r'\b(?:\d[ -]*?){13,19}\b',
         flags=re.IGNORECASE
     )
 
@@ -67,12 +68,12 @@ class ContentFilter:
     )
 
     _PASSPORT_PATTERN = re.compile(
-        r'\b[A-Za-z]{2}[0-9]{2}\b',  # US format
+        r'\b[A-Za-z]{1,2}[0-9]{7,8}\b',
         flags=re.IGNORECASE
     )
 
     _BANK_ACCOUNT_PATTERN = re.compile(
-        r'\b(?:0[0-9]{13}|6[ -9][0-9]{2}|[0-24][0-9]{2})[-.\s]?[0-9]{4}[-.\s]?[0-9]{4}\b',
+        r'(?i)\b(?:account|acct|iban)\s*(?:number|no\.?|#)?\s*[:\-]?\s*([A-Z0-9]{8,34})\b',
         flags=re.IGNORECASE
     )
 
@@ -160,9 +161,16 @@ class ContentFilter:
 
     def _get_policy_config(self, name: str) -> Dict[str, Any]:
         """Get policy config with defaults."""
+        module_map = {
+            "pii_detection": "pii_detection",
+            "jailbreak_detection": "jailbreak_detection",
+            "injection_detection": "injection_detection",
+        }
         policy = get_policy(name)
+        module_name = module_map.get(name)
+        entitlement_enabled = True if module_name is None else policy_store.is_module_enabled(module_name)
         return {
-            "enabled": policy.get("enabled", True),
+            "enabled": policy.get("enabled", True) and entitlement_enabled,
             "action_on_detect": str(policy.get("action_on_detect", "BLOCK")).upper(),
             "severity_threshold": str(policy.get("severity_threshold", "LOW")).upper(),
         }
@@ -171,6 +179,23 @@ class ContentFilter:
         sev_rank = self._SEVERITY_RANK.get(severity.upper(), 0)
         thr_rank = self._SEVERITY_RANK.get(threshold.upper(), 1)
         return sev_rank >= thr_rank
+
+    def _luhn_valid(self, candidate: str) -> bool:
+        """Validate card candidate using Luhn checksum."""
+        digits = "".join(ch for ch in candidate if ch.isdigit())
+        if len(digits) < 13 or len(digits) > 19:
+            return False
+
+        total = 0
+        parity = len(digits) % 2
+        for idx, char in enumerate(digits):
+            digit = int(char)
+            if idx % 2 == parity:
+                digit *= 2
+                if digit > 9:
+                    digit -= 9
+            total += digit
+        return total % 10 == 0
 
     def check_pii(self, text: str) -> List[Dict[str, Any]]:
         """
@@ -220,23 +245,28 @@ class ContentFilter:
             })
 
         # Check Phone (International)
-        if self._PHONE_PATTERN_INTL.search(text):
+        intl_match = self._PHONE_PATTERN_INTL.search(text)
+        if intl_match:
             detections.append({
                 "type": "PHONE_INTL",
                 "pattern": "+XX-XXXX-XXXX",
-                "match": self._PHONE_PATTERN_INTL.search(text).group(),
+                "match": intl_match.group(),
                 "severity": "MEDIUM"
             })
 
         # Check Credit Card
-        if self._CREDIT_CARD_PATTERN.search(text):
-            match = self._CREDIT_CARD_PATTERN.search(text).group()
+        for match in self._CREDIT_CARD_PATTERN.findall(text):
+            if not self._luhn_valid(match):
+                continue
+            digits = "".join(ch for ch in match if ch.isdigit())
+            masked = f"{digits[:4]}-****-****-{digits[-4:]}" if len(digits) >= 8 else digits
             detections.append({
                 "type": "CREDIT_CARD",
                 "pattern": "XXXX-XXXX-XXXX-XXXX",
-                "match": match[:4] + "-" + match[4:8] + "-" + match[8:12],  # Mask
+                "match": masked,
                 "severity": "HIGH"
             })
+            break
 
         # Check IP Address
         if self._IP_ADDRESS_PATTERN.search(text):
@@ -257,12 +287,21 @@ class ContentFilter:
             })
 
         # Check Bank Account
-        if self._BANK_ACCOUNT_PATTERN.search(text):
-            match = self._BANK_ACCOUNT_PATTERN.search(text).group()
+        bank_match = self._BANK_ACCOUNT_PATTERN.search(text)
+        if bank_match:
+            account_value = bank_match.group(1)
+            if len(account_value) < 8:
+                account_value = ""
+        else:
+            account_value = ""
+        if account_value:
+            masked_account = (
+                f"{account_value[:2]}{'*' * max(2, len(account_value) - 4)}{account_value[-2:]}"
+            )
             detections.append({
                 "type": "BANK_ACCOUNT",
                 "pattern": "US Bank Account",
-                "match": match[:4] + "*" + match[4:8] + "*" + match[8:12],  # Mask
+                "match": masked_account,
                 "severity": "HIGH"
             })
 

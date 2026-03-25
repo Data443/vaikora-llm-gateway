@@ -7,7 +7,7 @@ Production-ready LLM reverse-proxy security gateway. The gateway intercepts ever
 **Status**
 - Phase 1: Production-ready prototype complete
 - Phase 2 production track: provider adapters + admin auth + entitlement limits implemented
-- Test suite: 42 tests passing
+- Test suite: 51 tests passing
 - End-to-end verification: OpenAI + Cyren IPRep/URLF confirmed
 
 ---
@@ -23,6 +23,7 @@ Production-ready LLM reverse-proxy security gateway. The gateway intercepts ever
 - Immutable audit log in PostgreSQL
 - Circuit breaker for external dependency failures
 - Admin API for hot policy updates
+- Sensitive policy fields are redacted in admin API responses
 - Policy versioning with rollback support
 - Entitlement-aware provider/model enforcement
 - Entitlement-aware input/output size limits
@@ -159,6 +160,7 @@ python -m pytest -q
 ```
 
 Note: Unit tests are mocked and do not call OpenAI or Cyren directly.
+When `ADMIN_AUTH_ENABLED=true`, `/audit/log` and `/audit/events` also require `x-admin-key`.
 
 ---
 
@@ -180,6 +182,14 @@ HOST=0.0.0.0
 PORT=8000
 WORKERS=1
 LOG_LEVEL=INFO
+UPSTREAM_TIMEOUT_SECONDS=60.0
+TRUST_PROXY_HEADERS=false
+
+# CORS
+CORS_ALLOWED_ORIGINS=http://localhost,http://127.0.0.1
+CORS_ALLOWED_METHODS=GET,POST,PUT,PATCH,DELETE,OPTIONS
+CORS_ALLOWED_HEADERS=*
+CORS_ALLOW_CREDENTIALS=false
 
 # LLM Target
 LLM_PROVIDER=openai

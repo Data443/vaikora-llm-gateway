@@ -2,14 +2,15 @@
 Public API routes for the Data443 LLM Gateway.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
-from fastapi import APIRouter, Request, Response, HTTPException, status
+from fastapi import APIRouter, Request, Response, HTTPException, status, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from loguru import logger
 
 from gateway.core.types import Decision
+from gateway.api.auth import require_admin_auth
 from gateway.integrations.audit import audit_logger
 
 
@@ -46,10 +47,10 @@ async def root() -> Dict[str, Any]:
 @public_router.get("/audit/log")
 async def get_audit_log(
     request: Request,
-    limit: int = 100,
-    offset: int = 0,
-    decision: str = None,
-    ip: str = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    decision: Optional[str] = None,
+    ip: Optional[str] = None,
 ) -> JSONResponse:
     """
     Query audit log.
@@ -60,6 +61,8 @@ async def get_audit_log(
     - decision: Filter by decision type (ALLOW, BLOCK, CONSTRAIN)
     - ip: Filter by IP address
     """
+    await require_admin_auth(request)
+
     decision_filter = None
     if decision:
         try:
@@ -86,10 +89,11 @@ async def get_audit_log(
 
 @public_router.get("/audit/events")
 async def get_gateway_events(
-    limit: int = 100,
-    offset: int = 0,
-    decision: str = None,
-    request_id: str = None,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    decision: Optional[str] = None,
+    request_id: Optional[str] = None,
 ) -> JSONResponse:
     """
     Query structured gateway event stream.
@@ -100,6 +104,8 @@ async def get_gateway_events(
     - decision: Filter by decision value
     - request_id: Filter by request id
     """
+    await require_admin_auth(request)
+
     events = await audit_logger.query_gateway_events(
         limit=limit,
         offset=offset,
@@ -114,7 +120,10 @@ async def get_gateway_events(
     }))
 
 
-@public_router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@public_router.api_route(
+    "/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+)
 async def proxy_request(request: Request, path: str) -> Response:
     """
     Proxy all requests to target LLM endpoint.

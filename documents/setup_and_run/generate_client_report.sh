@@ -14,6 +14,7 @@ if [ -f "$ROOT_DIR/.env" ]; then
 fi
 
 MODEL="${LLM_MODEL:-gpt-4o-mini}"
+OPENAI_EFFECTIVE_KEY="${LLM_API_KEY:-${OPENAI_API_KEY:-}}"
 REPORTS_DIR="$ROOT_DIR/documents/reports"
 TIMESTAMP_UTC="$(date -u +"%Y-%m-%d %H:%M:%S UTC")"
 TS_FILE="$(date -u +"%Y%m%d_%H%M%S")"
@@ -178,10 +179,10 @@ run_http_check "Disable OpenAI entitlement" "200" "entitlements_disable_openai.j
 run_http_check "Provider gate block test (expect 403)" "403" "provider_gate_block.json" -X POST "http://localhost:8000/v1/chat/completions" -H "Content-Type: application/json" -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello\"}]}"
 run_http_check "Re-enable OpenAI entitlement" "200" "entitlements_enable_openai.json" "${ADMIN_HEADER_ARGS[@]}" -X PUT "http://localhost:8000/admin/entitlements" -H "Content-Type: application/json" -d '{"providers":{"openai":true},"changed_by":"client_report","change_note":"restore provider access"}'
 
-if [ -n "${LLM_API_KEY:-}" ]; then
+if [ -n "${OPENAI_EFFECTIVE_KEY}" ]; then
   run_http_check "OpenAI proxy safe prompt" "200" "openai_proxy_safe_prompt.json" -X POST "http://localhost:8000/v1/chat/completions" -H "Content-Type: application/json" -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello\"}]}"
 else
-  record_skip "OpenAI proxy safe prompt" "LLM_API_KEY not set"
+  record_skip "OpenAI proxy safe prompt" "LLM_API_KEY/OPENAI_API_KEY not set"
 fi
 
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
@@ -208,8 +209,8 @@ else
   record_skip "OpenRouter proxy safe prompt" "OPENROUTER_API_KEY not set"
 fi
 
-run_http_check "Audit log query" "200" "audit_log_limit3.json" "http://localhost:8000/audit/log?limit=3"
-run_http_check "Gateway event query" "200" "gateway_events_limit5.json" "http://localhost:8000/audit/events?limit=5"
+run_http_check "Audit log query" "200" "audit_log_limit3.json" "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/log?limit=3"
+run_http_check "Gateway event query" "200" "gateway_events_limit5.json" "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/events?limit=5"
 
 LATEST_REQUEST_ID="$(python - "$ARTIFACT_DIR/gateway_events_limit5.json" <<'PY'
 import json

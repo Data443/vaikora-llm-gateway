@@ -47,7 +47,7 @@ def policy_engine(mock_cyren_client, mock_audit_logger):
 @pytest.fixture
 def jwt_auth():
     """Create JWT auth handler."""
-    return JWTAuth()
+    return JWTAuth(secret="unit-test-secret")
 
 
 @pytest.fixture
