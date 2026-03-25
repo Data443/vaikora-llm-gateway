@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
 
 from gateway.api.public import public_router
@@ -36,20 +36,23 @@ def _build_app() -> FastAPI:
     return app
 
 
-def test_managed_agent_proxy_requires_registered_agent(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_managed_agent_proxy_requires_registered_agent(monkeypatch) -> None:
     app = _build_app()
     monkeypatch.setattr(agent_registry, "get_agent", AsyncMock(return_value=None))
 
-    client = TestClient(app)
-    response = client.post(
-        "/agents/missing-agent/v1/chat/completions",
-        json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
-    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/agents/missing-agent/v1/chat/completions",
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        )
 
     assert response.status_code == 404
 
 
-def test_managed_agent_proxy_sets_agent_context(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_managed_agent_proxy_sets_agent_context(monkeypatch) -> None:
     app = _build_app()
     monkeypatch.setattr(
         agent_registry,
@@ -64,11 +67,12 @@ def test_managed_agent_proxy_sets_agent_context(monkeypatch) -> None:
         ),
     )
 
-    client = TestClient(app)
-    response = client.post(
-        "/agents/agent-1/v1/chat/completions",
-        json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hello"}]},
-    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post(
+            "/agents/agent-1/v1/chat/completions",
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hello"}]},
+        )
 
     assert response.status_code == 200
     payload = response.json()

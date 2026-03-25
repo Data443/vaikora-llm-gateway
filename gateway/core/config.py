@@ -206,6 +206,35 @@ class Settings(BaseSettings):
         description="Static admin API key (x-admin-key)"
     )
 
+    # Agent governance hardening
+    agent_link_enforcement_enabled: bool = Field(
+        default=True,
+        description="Require an active A2A link before creating agent interactions",
+    )
+    agent_interaction_retention_days: int = Field(
+        default=30,
+        description=(
+            "Retention window (days) applied to agent interaction list APIs; "
+            "0 disables retention filtering"
+        ),
+    )
+    # OpenTelemetry
+    otel_enabled: bool = Field(
+        default=False,
+        description="Enable OpenTelemetry tracing hooks",
+    )
+    otel_service_name: str = Field(
+        default="data443-llm-gateway",
+        description="Service name reported in OpenTelemetry resources",
+    )
+    otel_exporter_otlp_endpoint: str = Field(
+        default="",
+        description="OTLP HTTP endpoint for trace export (optional)",
+    )
+    otel_exporter_timeout_seconds: float = Field(
+        default=5.0,
+        description="Timeout for OTLP trace export",
+    )
     # Circuit Breaker
     circuit_breaker_failure_threshold: int = Field(
         default=5,
@@ -226,3 +255,4 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+

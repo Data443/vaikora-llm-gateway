@@ -7,7 +7,7 @@ Production-ready LLM reverse-proxy security gateway. The gateway intercepts ever
 **Status**
 - Phase 1: Production-ready prototype complete
 - Phase 2 implementation scope in this repo: verified (policy lifecycle, entitlements, content controls, telemetry, managed-agent governance)
-- Test suite: 78 tests passing
+- Test suite: 87 tests passing
 - End-to-end verification: OpenAI + Cyren IPRep/URLF confirmed, including managed-agent proxy path
 
 ---
@@ -34,10 +34,15 @@ Production-ready LLM reverse-proxy security gateway. The gateway intercepts ever
 - Structured gateway event stream (`/audit/events`)
 - Telemetry metrics endpoint (`/audit/metrics`)
 - Prometheus metrics endpoint (`/audit/metrics/prometheus`)
+- Optional OpenTelemetry trace hooks (policy + upstream spans)
 - Managed agent registry (`create/wrap/list/get`)
 - A2A link + interaction governance APIs (create/approve/block/get)
+- Approved-link enforcement before A2A interaction creation
+- Agent metadata policy constraints for source->target interaction rules
+- Agent interaction retention + time-window filtering
 - Managed-agent proxy route (`/agents/{agent_id}/v1/chat/completions`)
 - JSON response inspection for policy enforcement
+- Detector/cache/error telemetry counters + agent governance Prometheus counters
 
 ---
 
@@ -217,6 +222,11 @@ When `ADMIN_AUTH_ENABLED=true`, `/audit/log`, `/audit/events`, and `/audit/metri
 
 These scripts rebuild containers, run health checks, validate PII policy behavior, execute tests, and perform real OpenAI and Cyren calls. OpenAI requires a key with active quota.
 
+**Runbook**
+
+- Local/VPS operations runbook: `documents/runbook.md`
+- Production baseline checklist: enable `ADMIN_AUTH_ENABLED=true`, set `ADMIN_API_KEY`, set strong `JWT_SECRET`, and set explicit CORS origins.
+
 ---
 
 **Configuration (.env)**
@@ -239,7 +249,7 @@ CORS_ALLOW_CREDENTIALS=false
 # LLM Target
 LLM_PROVIDER=openai
 LLM_ENDPOINT=https://api.openai.com
-LLM_API_KEY=your-openai-api-key
+LLM_API_KEY=
 OPENAI_ENDPOINT=https://api.openai.com
 OPENAI_API_KEY=
 ANTHROPIC_ENDPOINT=https://api.anthropic.com
@@ -250,17 +260,22 @@ GEMINI_API_KEY=
 OPENROUTER_ENDPOINT=https://openrouter.ai/api/v1
 OPENROUTER_API_KEY=
 
-# Data443 Cyren API (Trial Endpoints)
+# Cyren + CTAS
 CYREN_IPREP_URL=https://try-now-ipreputation.data443.io/ctipd/iprep
 CYREN_URLF_URL=https://try-now-urlcat.data443.io/ctwsd/websec
 CYREN_API_KEY=
 CYREN_TIMEOUT=5.0
+CYREN_RETRY_ATTEMPTS=2
+CTAS_URL=https://try-now-antispam.data443.io/ctasd/ClassifyMessage_Inline
+CTAS_TIMEOUT=5.0
 
 # Redis Cache
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_DB=0
 REDIS_PASSWORD=
+REDIS_L1_TTL=300
+REDIS_L2_TTL=3600
 
 # PostgreSQL Audit Log
 POSTGRES_HOST=localhost
@@ -291,6 +306,16 @@ JWT_AUDIENCE=data443-gateway
 # Admin API Authentication (Optional)
 ADMIN_AUTH_ENABLED=false
 ADMIN_API_KEY=
+
+# Agent Governance Hardening
+AGENT_LINK_ENFORCEMENT_ENABLED=true
+AGENT_INTERACTION_RETENTION_DAYS=30
+
+# OpenTelemetry (Optional)
+OTEL_ENABLED=false
+OTEL_SERVICE_NAME=data443-llm-gateway
+OTEL_EXPORTER_OTLP_ENDPOINT=
+OTEL_EXPORTER_TIMEOUT_SECONDS=5.0
 ```
 
 ---
@@ -298,54 +323,57 @@ ADMIN_API_KEY=
 **API Endpoints**
 
 Public:
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `GET /` | Gateway information |
-| `GET /health` | Health check and component status |
-| `GET /audit/log` | Query audit log |
-| `GET /audit/events` | Query structured gateway events |
-| `GET /audit/metrics` | Query gateway telemetry snapshot (JSON) |
-| `GET /audit/metrics/prometheus` | Query gateway telemetry in Prometheus format |
-| `POST /agents/{agent_id}/v1/chat/completions` | Managed-agent proxy path |
-| `* /{path:path}` | Proxy to target LLM endpoint |
+| `GET /` | `GET` | Gateway information |
+| `GET /health` | `GET` | Health check and component status |
+| `GET /audit/log` | `GET` | Query audit log |
+| `GET /audit/events` | `GET` | Query structured gateway events |
+| `GET /audit/metrics` | `GET` | Query gateway telemetry snapshot (JSON) |
+| `GET /audit/metrics/prometheus` | `GET` | Query gateway telemetry in Prometheus format |
+| `POST /agents/{agent_id}/v1/chat/completions` | `POST` | Managed-agent proxy path |
+| `* /{path:path}` | `ANY` | Proxy to target LLM endpoint |
 
 Admin:
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `GET /admin/policies` | List all policies |
-| `GET /admin/policies/pii` | Get PII detection policy |
-| `PUT /admin/policies/pii` | Update PII detection policy |
-| `GET /admin/policies/jailbreak` | Get jailbreak policy |
-| `PUT /admin/policies/jailbreak` | Update jailbreak policy |
-| `GET /admin/policies/injection` | Get injection policy |
-| `PUT /admin/policies/injection` | Update injection policy |
-| `GET /admin/policies/semantic` | Get semantic detection policy |
-| `PUT /admin/policies/semantic` | Update semantic detection policy |
-| `GET /admin/policies/domain-risk` | Get domain risk scoring policy |
-| `PUT /admin/policies/domain-risk` | Update domain risk scoring policy |
-| `GET /admin/policies/email-classification` | Get email classification policy |
-| `PUT /admin/policies/email-classification` | Update email classification policy |
-| `GET /admin/policies/jwt` | Get JWT auth policy |
-| `PUT /admin/policies/jwt` | Update JWT auth policy |
-| `GET /admin/policies/{name}/versions` | List policy versions |
-| `POST /admin/policies/{name}/rollback` | Rollback to previous policy version |
-| `GET /admin/entitlements` | Get entitlement configuration |
-| `PUT /admin/entitlements` | Update entitlement configuration |
-| `POST /admin/agents/create` | Create or update managed agent |
-| `POST /admin/agents/wrap` | Wrap external agent into control plane |
-| `GET /admin/agents` | List managed agents |
-| `GET /admin/agents/{agent_id}` | Get managed agent details |
-| `POST /admin/agents/link` | Create/update A2A link between agents |
-| `GET /admin/agents/links` | List A2A links |
-| `POST /admin/a2a/interactions` | Create A2A interaction |
-| `POST /admin/a2a/interactions/{interaction_id}/approve` | Approve A2A interaction |
-| `POST /admin/a2a/interactions/{interaction_id}/block` | Block A2A interaction |
-| `GET /admin/a2a/interactions/{interaction_id}` | Get A2A interaction |
-| `POST /admin/interactions/{request_id}/approve` | Mark interaction as approved |
-| `POST /admin/interactions/{request_id}/block` | Mark interaction as blocked |
-| `GET /admin/interactions/{request_id}` | Get interaction review status |
-| `DELETE /admin/policies/{name}` | Delete a policy |
-| `POST /admin/policies/reset` | Reset all policies |
+| `GET /admin/policies` | `GET` | List all policies |
+| `GET /admin/policies/pii` | `GET` | Get PII detection policy |
+| `PUT /admin/policies/pii` | `PUT` | Update PII detection policy |
+| `GET /admin/policies/jailbreak` | `GET` | Get jailbreak policy |
+| `PUT /admin/policies/jailbreak` | `PUT` | Update jailbreak policy |
+| `GET /admin/policies/injection` | `GET` | Get injection policy |
+| `PUT /admin/policies/injection` | `PUT` | Update injection policy |
+| `GET /admin/policies/semantic` | `GET` | Get semantic detection policy |
+| `PUT /admin/policies/semantic` | `PUT` | Update semantic detection policy |
+| `GET /admin/policies/domain-risk` | `GET` | Get domain risk scoring policy |
+| `PUT /admin/policies/domain-risk` | `PUT` | Update domain risk scoring policy |
+| `GET /admin/policies/email-classification` | `GET` | Get email classification policy |
+| `PUT /admin/policies/email-classification` | `PUT` | Update email classification policy |
+| `GET /admin/policies/jwt` | `GET` | Get JWT auth policy |
+| `PUT /admin/policies/jwt` | `PUT` | Update JWT auth policy |
+| `GET /admin/policies/{name}/versions` | `GET` | List policy versions |
+| `POST /admin/policies/{name}/rollback` | `POST` | Rollback to previous policy version |
+| `GET /admin/entitlements` | `GET` | Get entitlement configuration |
+| `PUT /admin/entitlements` | `PUT` | Update entitlement configuration |
+| `POST /admin/agents/create` | `POST` | Create or update managed agent |
+| `POST /admin/agents/wrap` | `POST` | Wrap external agent into control plane |
+| `GET /admin/agents` | `GET` | List managed agents |
+| `GET /admin/agents/{agent_id}` | `GET` | Get managed agent details |
+| `POST /admin/agents/link` | `POST` | Create/update A2A link between agents |
+| `GET /admin/agents/links` | `GET` | List A2A links |
+| `POST /admin/a2a/interactions` | `POST` | Create A2A interaction |
+| `GET /admin/a2a/interactions` | `GET` | List A2A interactions |
+| `GET /admin/a2a/interactions/{interaction_id}` | `GET` | Get A2A interaction |
+| `POST /admin/a2a/interactions/{interaction_id}/approve` | `POST` | Approve A2A interaction |
+| `POST /admin/a2a/interactions/{interaction_id}/block` | `POST` | Block A2A interaction |
+| `POST /admin/interactions/{request_id}/approve` | `POST` | Mark interaction as approved |
+| `POST /admin/interactions/{request_id}/block` | `POST` | Mark interaction as blocked |
+| `GET /admin/interactions/{request_id}` | `GET` | Get interaction review status |
+| `DELETE /admin/policies/{name}` | `DELETE` | Delete a policy |
+| `POST /admin/policies/reset` | `POST` | Reset all policies |
 
 ---
 
@@ -358,6 +386,7 @@ data443-llm-gateway/
     api/
       public.py
       admin.py
+      agent_control.py
     core/
       config.py
       logging.py
@@ -367,10 +396,13 @@ data443-llm-gateway/
       policy_service.py
       content_filter.py
       jwt_auth.py
+      agent_registry.py
     integrations/
       cyren_client.py
       cache.py
       audit.py
+      telemetry.py
+      event_schema.py
     policy/
       store.py
     providers/
@@ -384,7 +416,15 @@ data443-llm-gateway/
     test_gateway.py
     test_phase2_policy_store.py
     test_phase2_provider_adapters.py
+    test_phase2_observability_and_governance.py
+    test_phase3_agent_control.py
+    test_phase3_agent_proxy.py
+    test_phase3_agent_registry_hardening.py
     phase1_verify.sh
+  documents/
+    setup_and_run/
+      phase2_verify.sh
+      generate_client_report.sh
   tools/
     redteam_prompts.jsonl
     redteam_runner.py
@@ -411,3 +451,11 @@ data443-llm-gateway/
 **License**
 
 Data443 - All rights reserved.
+
+
+
+
+
+
+
+

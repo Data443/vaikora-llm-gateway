@@ -7,32 +7,36 @@ evaluates security policy, and forwards to target endpoint.
 
 from contextlib import asynccontextmanager
 from typing import List
+
+import uvicorn
 from fastapi import FastAPI, HTTPException, Request, status
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-import uvicorn
-
+from fastapi.responses import JSONResponse
 from loguru import logger
 
-from gateway.core.config import settings
-from gateway.core.logging import configure_logging
-from gateway.integrations.cache import cache
-from gateway.integrations.audit import audit_logger
-from gateway.integrations.cyren_client import cyren_client
-from gateway.policy.store import policy_store
-from gateway.services.policy_service import init_policy_engine
-from gateway.services.proxy_service import init_proxy_handler
 from gateway.api.admin import get_admin_router
 from gateway.api.agent_control import agent_control_router
 from gateway.api.public import public_router
+from gateway.core.config import settings
+from gateway.core.logging import configure_logging
+from gateway.integrations.audit import audit_logger
+from gateway.integrations.cache import cache
+from gateway.integrations.cyren_client import cyren_client
+from gateway.integrations.otel import initialize_otel, shutdown_otel
+from gateway.policy.store import policy_store
 from gateway.services.agent_registry import agent_registry
+from gateway.services.policy_service import init_policy_engine
+from gateway.services.proxy_service import init_proxy_handler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     logger.info("Starting Data443 LLM Gateway...")
+
+    # Initialize OpenTelemetry hooks (optional)
+    initialize_otel()
 
     # Connect to cache
     await cache.connect()
@@ -61,6 +65,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Data443 LLM Gateway...")
     await cache.disconnect()
     await audit_logger.disconnect()
+    shutdown_otel()
     logger.info("Shutdown complete")
 
 
@@ -70,6 +75,7 @@ configure_logging(settings.log_level)
 def _split_csv(value: str) -> List[str]:
     """Split comma-separated configuration into a normalized list."""
     return [item.strip() for item in value.split(",") if item.strip()]
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -120,7 +126,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
                 "type": "http_error",
                 "code": exc.status_code,
             }
-        }
+        },
     )
 
 
@@ -138,4 +144,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

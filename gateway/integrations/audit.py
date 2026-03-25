@@ -868,6 +868,7 @@ class AuditLogger:
         offset: int = 0,
         source_agent_id: Optional[str] = None,
         target_agent_id: Optional[str] = None,
+        protocol: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """List A2A links."""
         if not self.connected:
@@ -892,6 +893,11 @@ class AuditLogger:
                 if target_agent_id:
                     query += f" AND target_agent_id = ${idx}"
                     params.append(target_agent_id)
+                    idx += 1
+
+                if protocol:
+                    query += f" AND protocol = ${idx}"
+                    params.append(protocol)
                     idx += 1
 
                 query += f" ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}"
@@ -1046,9 +1052,13 @@ class AuditLogger:
         *,
         limit: int = 100,
         offset: int = 0,
+        agent_id: Optional[str] = None,
         source_agent_id: Optional[str] = None,
         target_agent_id: Optional[str] = None,
         review_status: Optional[str] = None,
+        created_after: Optional[datetime] = None,
+        created_before: Optional[datetime] = None,
+        retention_days: int = 0,
     ) -> List[Dict[str, Any]]:
         """List agent interactions."""
         if not self.connected:
@@ -1065,6 +1075,11 @@ class AuditLogger:
                 params: List[Any] = []
                 idx = 1
 
+                if agent_id:
+                    query += f" AND (source_agent_id = ${idx} OR target_agent_id = ${idx})"
+                    params.append(agent_id)
+                    idx += 1
+
                 if source_agent_id:
                     query += f" AND source_agent_id = ${idx}"
                     params.append(source_agent_id)
@@ -1078,6 +1093,21 @@ class AuditLogger:
                 if review_status:
                     query += f" AND review_status = ${idx}"
                     params.append(review_status)
+                    idx += 1
+
+                if created_after:
+                    query += f" AND created_at >= ${idx}"
+                    params.append(created_after)
+                    idx += 1
+
+                if created_before:
+                    query += f" AND created_at <= ${idx}"
+                    params.append(created_before)
+                    idx += 1
+
+                if retention_days > 0:
+                    query += f" AND created_at >= NOW() - (${idx} * INTERVAL '1 day')"
+                    params.append(retention_days)
                     idx += 1
 
                 query += f" ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}"

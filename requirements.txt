@@ -34,3 +34,8 @@ python-jose[cryptography]==3.3.0
 
 # PII detection
 regex==2024.11.6
+
+# OpenTelemetry (optional hooks)
+opentelemetry-api==1.28.2
+opentelemetry-sdk==1.28.2
+opentelemetry-exporter-otlp-proto-http==1.28.2

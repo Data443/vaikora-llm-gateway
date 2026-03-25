@@ -15,6 +15,7 @@ from redis.asyncio import Redis
 from loguru import logger
 
 from gateway.core.config import settings
+from gateway.integrations.telemetry import telemetry_metrics
 
 
 class L1Cache:
@@ -30,11 +31,13 @@ class L1Cache:
             expiry, value = self.cache[key]
             if time.time() < expiry:
                 logger.debug(f"L1 cache HIT: {key}")
+                telemetry_metrics.record_cache_event(layer="l1", outcome="hit")
                 return value
             else:
                 # Expired, remove
                 del self.cache[key]
         logger.debug(f"L1 cache MISS: {key}")
+        telemetry_metrics.record_cache_event(layer="l1", outcome="miss")
         return None
 
     def set(self, key: str, value: Any) -> None:
@@ -87,30 +90,37 @@ class L2Cache:
     async def get(self, key: str) -> Optional[str]:
         """Get value from L2 cache."""
         if not self.connected:
+            telemetry_metrics.record_cache_event(layer="l2", outcome="disconnected")
             return None
         try:
             value = await self.redis.get(key)
             if value:
                 logger.debug(f"L2 cache HIT: {key}")
+                telemetry_metrics.record_cache_event(layer="l2", outcome="hit")
                 return value
             logger.debug(f"L2 cache MISS: {key}")
+            telemetry_metrics.record_cache_event(layer="l2", outcome="miss")
             return None
         except Exception as e:
             logger.warning(f"Redis GET error: {e}")
+            telemetry_metrics.record_cache_event(layer="l2", outcome="error")
             return None
 
     async def set(self, key: str, value: str, ttl: Optional[int] = None) -> bool:
         """Set value in L2 cache."""
         if not self.connected:
+            telemetry_metrics.record_cache_event(layer="l2", outcome="disconnected")
             return False
         try:
             if ttl is None:
                 ttl = settings.redis_l2_ttl
             await self.redis.setex(key, ttl, value)
             logger.debug(f"L2 cache SET: {key} (TTL: {ttl}s)")
+            telemetry_metrics.record_cache_event(layer="l2", outcome="set")
             return True
         except Exception as e:
             logger.warning(f"Redis SET error: {e}")
+            telemetry_metrics.record_cache_event(layer="l2", outcome="error")
             return False
 
     async def delete(self, key: str) -> None:

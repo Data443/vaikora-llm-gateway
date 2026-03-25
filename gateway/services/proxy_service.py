@@ -21,7 +21,9 @@ from gateway.core.types import Decision
 from gateway.services.policy_service import PolicyEngine, PolicyDecision
 from gateway.integrations.audit import audit_logger
 from gateway.integrations.cache import cache
+from gateway.integrations.event_schema import build_gateway_event_attributes
 from gateway.integrations.telemetry import telemetry_metrics
+from gateway.integrations.otel import start_span
 from gateway.services.jwt_auth import JWTAuth, get_current_user_from_request
 from gateway.services.content_filter import get_content_filter, SecurityAction
 from gateway.api.admin import get_policy
@@ -203,6 +205,7 @@ class ProxyHandler:
         # STEP 3: Content security filtering
         content_filter = get_content_filter()
         content_security = content_filter.check_request(request_body)
+        telemetry_metrics.record_detector_hits(content_security.get("counts"))
 
         if content_security["action"] == SecurityAction.BLOCK:
             reason = f"Request blocked: {content_security['reason']}"
@@ -244,15 +247,24 @@ class ProxyHandler:
             )
 
         # STEP 4: Evaluate policy
-        decision = await self.policy_engine.evaluate_request(
-            ip_address=client_ip,
-            url=request_url,
-            user_agent=user_agent,
-            request_id=request_id,
-            request_method=request.method,
-            request_path=request.url.path,
-            request_body=request_body,
-        )
+        with start_span(
+            "gateway.policy.evaluate_request",
+            {
+                "gateway.request_id": request_id,
+                "http.route": request.url.path,
+                "llm.provider": provider_name,
+                "llm.model": model_name,
+            },
+        ):
+            decision = await self.policy_engine.evaluate_request(
+                ip_address=client_ip,
+                url=request_url,
+                user_agent=user_agent,
+                request_id=request_id,
+                request_method=request.method,
+                request_path=request.url.path,
+                request_body=request_body,
+            )
 
         if decision.decision == Decision.BLOCK:
             await self._emit_gateway_event(
@@ -344,14 +356,26 @@ class ProxyHandler:
                 outbound_json = request_body
                 outbound_params = {}
 
-            async with AsyncClient(timeout=self.timeout) as client:
-                upstream_response = await client.request(
-                    method=request.method,
-                    url=target_url,
-                    params=outbound_params or None,
-                    json=outbound_json,
-                    headers=outbound_headers,
-                )
+            with start_span(
+                "gateway.proxy.upstream_call",
+                {
+                    "gateway.request_id": request_id,
+                    "http.method": request.method,
+                    "http.route": path,
+                    "http.url": target_url,
+                    "llm.provider": provider_name,
+                    "llm.model": model_name,
+                },
+            ) as upstream_span:
+                async with AsyncClient(timeout=self.timeout) as client:
+                    upstream_response = await client.request(
+                        method=request.method,
+                        url=target_url,
+                        params=outbound_params or None,
+                        json=outbound_json,
+                        headers=outbound_headers,
+                    )
+                upstream_span.set_attribute("http.status_code", upstream_response.status_code)
 
             response_time_ms = int((time.time() - start_time) * 1000)
             logger.info(
@@ -486,6 +510,7 @@ class ProxyHandler:
         except Exception as exc:
             response_time_ms = int((time.time() - start_time) * 1000)
             logger.error(f"Request {request_id} failed: {exc}")
+            telemetry_metrics.record_error("upstream_request_failed")
             await self._emit_gateway_event(
                 request_id=request_id,
                 decision="ERROR",
@@ -563,13 +588,13 @@ class ProxyHandler:
             response_status=response_status,
             response_time_ms=response_time_ms,
             reason=reason,
-            attributes={
-                "request_method": request.method,
-                "request_path": request.url.path,
-                "provider": provider_name,
-                "request_body": request_body,
-                **merged_attributes,
-            },
+            attributes=build_gateway_event_attributes(
+                request_method=request.method,
+                request_path=request.url.path,
+                provider=provider_name,
+                request_body=request_body if isinstance(request_body, dict) else {},
+                extra=merged_attributes,
+            ),
         )
 
     def _json_error_response(
@@ -580,6 +605,7 @@ class ProxyHandler:
         code: str,
     ) -> Response:
         """Build standardized JSON error response."""
+        telemetry_metrics.record_error(error_type)
         return Response(
             content=json.dumps(
                 {
@@ -793,3 +819,7 @@ def init_proxy_handler(policy_engine: PolicyEngine) -> ProxyHandler:
     global proxy_handler
     proxy_handler = ProxyHandler(policy_engine)
     return proxy_handler
+
+
+
+

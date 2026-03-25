@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from gateway.api.auth import require_admin_auth
@@ -229,10 +229,11 @@ async def list_agents(
 
 @agent_control_router.get("/agents/links", response_model=AgentLinkListResponse)
 async def list_agent_links(
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     source_agent_id: Optional[str] = None,
     target_agent_id: Optional[str] = None,
+    protocol: Optional[str] = None,
 ) -> AgentLinkListResponse:
     """List A2A links between agents."""
     records = await agent_registry.list_links(
@@ -240,6 +241,7 @@ async def list_agent_links(
         offset=offset,
         source_agent_id=source_agent_id,
         target_agent_id=target_agent_id,
+        protocol=protocol,
     )
     return AgentLinkListResponse(
         success=True,
@@ -314,20 +316,26 @@ async def create_a2a_interaction(
 
 @agent_control_router.get("/a2a/interactions", response_model=A2AInteractionListResponse)
 async def list_a2a_interactions(
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    agent_id: Optional[str] = None,
     source_agent_id: Optional[str] = None,
     target_agent_id: Optional[str] = None,
     review_status: Optional[str] = None,
+    created_after: Optional[datetime] = None,
+    created_before: Optional[datetime] = None,
 ) -> A2AInteractionListResponse:
     """List A2A interaction records."""
     try:
         records = await agent_registry.list_interactions(
             limit=limit,
             offset=offset,
+            agent_id=agent_id,
             source_agent_id=source_agent_id,
             target_agent_id=target_agent_id,
             review_status=review_status,
+            created_after=created_after,
+            created_before=created_before,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -407,4 +415,3 @@ async def block_a2a_interaction(
 ) -> A2AInteractionResponse:
     """Block an A2A interaction."""
     return await _review_a2a_interaction(interaction_id, "BLOCKED", payload)
-
