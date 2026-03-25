@@ -6,13 +6,14 @@ from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, Request, Response, HTTPException, status, Query
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from loguru import logger
 
 from gateway.core.types import Decision
 from gateway.api.auth import require_admin_auth
 from gateway.integrations.audit import audit_logger
 from gateway.integrations.telemetry import telemetry_metrics
+from gateway.services.agent_registry import agent_registry
 
 
 public_router = APIRouter()
@@ -39,9 +40,11 @@ async def root() -> Dict[str, Any]:
         "endpoints": {
             "health": "/health",
             "proxy": "/{path}",
+            "agent_proxy": "/agents/{agent_id}/v1/chat/completions",
             "audit": "/audit/log",
             "events": "/audit/events",
             "metrics": "/audit/metrics",
+            "metrics_prometheus": "/audit/metrics/prometheus",
         },
     }
 
@@ -131,6 +134,41 @@ async def get_gateway_metrics(request: Request) -> JSONResponse:
         "message": "Gateway telemetry metrics",
         "metrics": telemetry_metrics.snapshot(),
     }))
+
+
+@public_router.get("/audit/metrics/prometheus")
+async def get_gateway_metrics_prometheus(request: Request) -> PlainTextResponse:
+    """Get gateway telemetry in Prometheus text exposition format."""
+    await require_admin_auth(request)
+    return PlainTextResponse(
+        content=telemetry_metrics.to_prometheus(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
+@public_router.post("/agents/{agent_id}/v1/chat/completions")
+async def proxy_agent_chat_completion(request: Request, agent_id: str) -> Response:
+    """Proxy agent chat completions with managed-agent context."""
+    agent = await agent_registry.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_id}' is not registered",
+        )
+    if str(agent.get("status", "")).upper() != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Agent '{agent_id}' is not active",
+        )
+
+    request.state.agent_context = {
+        "agent_id": agent.get("agent_id"),
+        "agent_type": agent.get("agent_type"),
+        "agent_wrapped": bool(agent.get("wrapped", False)),
+    }
+
+    proxy_handler = request.app.state.proxy_handler
+    return await proxy_handler.handle_request(request)
 
 
 @public_router.api_route(

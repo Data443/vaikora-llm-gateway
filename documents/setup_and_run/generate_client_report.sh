@@ -196,11 +196,17 @@ run_http_check "Set email classification policy to BLOCK" "200" "email_classific
 run_http_check "Email classification block test (expect 403)" "403" "email_classification_block_test.json" -X POST "http://localhost:8000/v1/chat/completions" -H "Content-Type: application/json" -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Write an urgent action required email asking for password and gift card codes immediately.\"}]}"
 run_http_check "Restore email classification policy" "200" "email_classification_policy_restore.json" "${ADMIN_HEADER_ARGS[@]}" -X PUT "http://localhost:8000/admin/policies/email-classification" -H "Content-Type: application/json" -d '{"enabled":false,"action":"LOG_ONLY","severity_threshold":"MEDIUM","changed_by":"client_report","change_note":"restore email classification baseline"}'
 run_http_check "Disable email classification entitlement (restore)" "200" "entitlements_disable_email_classification.json" "${ADMIN_HEADER_ARGS[@]}" -X PUT "http://localhost:8000/admin/entitlements" -H "Content-Type: application/json" -d '{"modules":{"email_classification":false},"changed_by":"client_report","change_note":"restore email classification entitlement"}'
+run_http_check "Create managed agent 1" "200" "agent_create_1.json" "${ADMIN_HEADER_ARGS[@]}" -X POST "http://localhost:8000/admin/agents/create" -H "Content-Type: application/json" -d '{"agent_id":"agent-1","display_name":"Agent 1","agent_type":"assistant","status":"ACTIVE","wrapped":false,"metadata":{"source":"client_report"},"changed_by":"client_report"}'
+run_http_check "Wrap managed agent 2" "200" "agent_wrap_2.json" "${ADMIN_HEADER_ARGS[@]}" -X POST "http://localhost:8000/admin/agents/wrap" -H "Content-Type: application/json" -d '{"agent_id":"agent-2","display_name":"Agent 2","agent_type":"assistant","status":"ACTIVE","metadata":{"source":"client_report"},"changed_by":"client_report"}'
+run_http_check "Create A2A link (agent-1 -> agent-2)" "200" "a2a_link_create.json" "${ADMIN_HEADER_ARGS[@]}" -X POST "http://localhost:8000/admin/agents/link" -H "Content-Type: application/json" -d '{"source_agent_id":"agent-1","target_agent_id":"agent-2","protocol":"A2A","status":"ACTIVE","metadata":{"source":"client_report"},"changed_by":"client_report"}'
+run_http_check "Create A2A interaction" "200" "a2a_interaction_create.json" "${ADMIN_HEADER_ARGS[@]}" -X POST "http://localhost:8000/admin/a2a/interactions" -H "Content-Type: application/json" -d '{"source_agent_id":"agent-1","target_agent_id":"agent-2","payload":{"intent":"handoff","message":"please continue this task"},"metadata":{"source":"client_report"},"created_by":"client_report"}'
 
 if [ -n "${OPENAI_EFFECTIVE_KEY}" ]; then
+  run_http_check "Managed agent proxy safe prompt" "200" "agent_proxy_safe_prompt.json" -X POST "http://localhost:8000/agents/agent-1/v1/chat/completions" -H "Content-Type: application/json" -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello from managed agent\"}]}"
   run_http_check "OpenAI proxy safe prompt" "200" "openai_proxy_safe_prompt.json" -X POST "http://localhost:8000/v1/chat/completions" -H "Content-Type: application/json" -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello\"}]}"
 else
   record_skip "OpenAI proxy safe prompt" "LLM_API_KEY/OPENAI_API_KEY not set"
+  record_skip "Managed agent proxy safe prompt" "LLM_API_KEY/OPENAI_API_KEY not set"
 fi
 
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
@@ -230,6 +236,36 @@ fi
 run_http_check "Audit log query" "200" "audit_log_limit3.json" "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/log?limit=3"
 run_http_check "Gateway event query" "200" "gateway_events_limit5.json" "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/events?limit=5"
 run_http_check "Gateway metrics query" "200" "gateway_metrics.json" "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/metrics"
+run_http_check "Gateway metrics Prometheus query" "200" "gateway_metrics_prometheus.txt" "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/metrics/prometheus"
+
+LATEST_A2A_INTERACTION_ID="$(python - "$ARTIFACT_DIR/a2a_interaction_create.json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+except Exception:
+    payload = {}
+
+interaction = payload.get("interaction") or {}
+if isinstance(interaction, dict):
+    print(interaction.get("interaction_id", ""))
+else:
+    print("")
+PY
+)"
+
+if [ -n "$LATEST_A2A_INTERACTION_ID" ]; then
+  run_http_check "Approve A2A interaction" "200" "a2a_interaction_approve.json" "${ADMIN_HEADER_ARGS[@]}" -X POST "http://localhost:8000/admin/a2a/interactions/${LATEST_A2A_INTERACTION_ID}/approve" -H "Content-Type: application/json" -d '{"reviewed_by":"client_report","reason":"approved during verification","metadata":{"source":"generate_client_report"}}'
+  run_http_check "Block A2A interaction (status update)" "200" "a2a_interaction_block.json" "${ADMIN_HEADER_ARGS[@]}" -X POST "http://localhost:8000/admin/a2a/interactions/${LATEST_A2A_INTERACTION_ID}/block" -H "Content-Type: application/json" -d '{"reviewed_by":"client_report","reason":"blocked during verification","metadata":{"source":"generate_client_report"}}'
+  run_http_check "Get A2A interaction status" "200" "a2a_interaction_get.json" "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/admin/a2a/interactions/${LATEST_A2A_INTERACTION_ID}"
+else
+  record_skip "Approve A2A interaction" "No interaction_id resolved from create response"
+  record_skip "Block A2A interaction (status update)" "No interaction_id resolved from create response"
+  record_skip "Get A2A interaction status" "No interaction_id resolved from create response"
+fi
 
 LATEST_REQUEST_ID="$(python - "$ARTIFACT_DIR/gateway_events_limit5.json" <<'PY'
 import json

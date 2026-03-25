@@ -94,6 +94,22 @@ class Settings(BaseSettings):
     postgres_db: str = Field(default="data443_audit", description="PostgreSQL database")
     postgres_user: str = Field(default="postgres", description="PostgreSQL user")
     postgres_password: str = Field(default="", description="PostgreSQL password")
+    audit_retention_days: int = Field(
+        default=30,
+        description="Retention window (in days) applied to audit/event query APIs; 0 disables retention filtering",
+    )
+    audit_mask_sensitive_fields: bool = Field(
+        default=True,
+        description="Mask sensitive fields in audit/event API responses",
+    )
+    audit_redact_message_content: bool = Field(
+        default=False,
+        description="Redact prompt/message content in audit/event API responses",
+    )
+    audit_max_string_length: int = Field(
+        default=4000,
+        description="Max string length in audit/event API responses; 0 disables truncation",
+    )
 
     # Target LLM Configuration (OpenAI)
     llm_provider: str = Field(

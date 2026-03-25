@@ -39,6 +39,11 @@ class ProxyHandler:
         self.timeout = Timeout(settings.upstream_timeout_seconds)
         self.provider_router = ProviderRouter()
 
+    def _is_chat_completions_path(self, path: str) -> bool:
+        """Return True for native and managed-agent chat-completions routes."""
+        normalized = (path or "").rstrip("/")
+        return normalized == "/v1/chat/completions" or normalized.endswith("/v1/chat/completions")
+
     async def handle_request(self, request: Request) -> Response:
         """
         Handle incoming LLM API request.
@@ -316,10 +321,11 @@ class ProxyHandler:
         start_time = time.time()
         path = request.url.path
         query = request.url.query
+        is_chat_completions = self._is_chat_completions_path(path)
 
         try:
             incoming_headers = dict(request.headers)
-            if path == "/v1/chat/completions" and isinstance(request_body, dict):
+            if is_chat_completions and isinstance(request_body, dict):
                 prepared = self.provider_router.prepare_chat_completion(
                     provider_name=provider_name,
                     request_body=request_body,
@@ -366,7 +372,7 @@ class ProxyHandler:
                 except Exception:
                     raw_payload = {}
 
-                if path == "/v1/chat/completions":
+                if is_chat_completions:
                     normalized = self.provider_router.normalize_chat_completion(
                         provider_name=provider_name,
                         status_code=upstream_response.status_code,
@@ -533,11 +539,16 @@ class ProxyHandler:
         attributes: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Persist structured event row for analytics and forensic use."""
+        agent_context = self._extract_agent_context(request)
+        merged_attributes = {
+            **(attributes or {}),
+            **agent_context,
+        }
         telemetry_metrics.record_event(
             decision=decision,
             provider=provider_name,
             response_time_ms=response_time_ms,
-            attributes=attributes or {},
+            attributes=merged_attributes,
             reason=reason,
         )
         await audit_logger.log_gateway_event(
@@ -557,7 +568,7 @@ class ProxyHandler:
                 "request_path": request.url.path,
                 "provider": provider_name,
                 "request_body": request_body,
-                **(attributes or {}),
+                **merged_attributes,
             },
         )
 
@@ -740,6 +751,29 @@ class ProxyHandler:
                     if ip:
                         return ip
         return request.client.host if request.client else "unknown"
+
+    def _extract_agent_context(self, request: Request) -> Dict[str, Any]:
+        """Extract managed-agent context for audit/event attributes."""
+        context: Dict[str, Any] = {}
+
+        state_context = getattr(request.state, "agent_context", None)
+        if isinstance(state_context, dict):
+            for key in ("agent_id", "agent_type", "agent_wrapped", "a2a_interaction_id"):
+                if key in state_context:
+                    context[key] = state_context[key]
+
+        headers = request.headers
+        for header, key in (
+            ("x-agent-id", "agent_id"),
+            ("x-agent-type", "agent_type"),
+            ("x-agent-session-id", "agent_session_id"),
+            ("x-a2a-interaction-id", "a2a_interaction_id"),
+        ):
+            value = headers.get(header)
+            if value:
+                context[key] = value
+
+        return context
 
     async def health_check(self) -> Dict[str, Any]:
         """Return gateway health status."""

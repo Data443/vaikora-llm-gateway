@@ -8,6 +8,15 @@ from threading import Lock
 from typing import Any, Dict, Optional
 
 
+def _escape_label_value(value: str) -> str:
+    """Escape label values for Prometheus text exposition format."""
+    return (
+        value.replace("\\", "\\\\")
+        .replace("\n", "\\n")
+        .replace('"', '\\"')
+    )
+
+
 class TelemetryMetrics:
     """Process-local counters and latency aggregates."""
 
@@ -84,6 +93,88 @@ class TelemetryMetrics:
                 "last_updated": self._last_updated.isoformat() if self._last_updated else None,
             }
 
+    def to_prometheus(self) -> str:
+        """Expose metrics in Prometheus text format."""
+        snap = self.snapshot()
+        latency = snap.get("latency_ms", {})
+
+        lines = [
+            "# HELP gateway_event_total Total number of gateway events recorded",
+            "# TYPE gateway_event_total counter",
+            f"gateway_event_total {snap.get('event_total', 0)}",
+            "# HELP gateway_decision_total Gateway event decisions by type",
+            "# TYPE gateway_decision_total counter",
+        ]
+
+        for decision, count in sorted(snap.get("decision_counts", {}).items()):
+            label = _escape_label_value(str(decision))
+            lines.append(f'gateway_decision_total{{decision="{label}"}} {count}')
+
+        lines.extend(
+            [
+                "# HELP gateway_provider_total Gateway events by upstream provider",
+                "# TYPE gateway_provider_total counter",
+            ]
+        )
+        for provider, count in sorted(snap.get("provider_counts", {}).items()):
+            label = _escape_label_value(str(provider))
+            lines.append(f'gateway_provider_total{{provider="{label}"}} {count}')
+
+        lines.extend(
+            [
+                "# HELP gateway_block_type_total Blocked events by block type",
+                "# TYPE gateway_block_type_total counter",
+            ]
+        )
+        for block_type, count in sorted(snap.get("block_type_counts", {}).items()):
+            label = _escape_label_value(str(block_type))
+            lines.append(f'gateway_block_type_total{{block_type="{label}"}} {count}')
+
+        lines.extend(
+            [
+                "# HELP gateway_block_reason_total Blocked events by normalized reason",
+                "# TYPE gateway_block_reason_total counter",
+            ]
+        )
+        for reason, count in sorted(snap.get("block_reason_counts", {}).items()):
+            label = _escape_label_value(str(reason))
+            lines.append(f'gateway_block_reason_total{{reason="{label}"}} {count}')
+
+        lines.extend(
+            [
+                "# HELP gateway_response_latency_ms_count Response latency samples",
+                "# TYPE gateway_response_latency_ms_count gauge",
+                f"gateway_response_latency_ms_count {latency.get('count', 0)}",
+                "# HELP gateway_response_latency_ms_avg Average response latency in milliseconds",
+                "# TYPE gateway_response_latency_ms_avg gauge",
+                f"gateway_response_latency_ms_avg {latency.get('avg') or 0}",
+                "# HELP gateway_response_latency_ms_min Minimum response latency in milliseconds",
+                "# TYPE gateway_response_latency_ms_min gauge",
+                f"gateway_response_latency_ms_min {latency.get('min') or 0}",
+                "# HELP gateway_response_latency_ms_max Maximum response latency in milliseconds",
+                "# TYPE gateway_response_latency_ms_max gauge",
+                f"gateway_response_latency_ms_max {latency.get('max') or 0}",
+            ]
+        )
+
+        timestamp_value = 0
+        last_updated_raw = snap.get("last_updated")
+        if isinstance(last_updated_raw, str):
+            try:
+                timestamp_value = datetime.fromisoformat(last_updated_raw).timestamp()
+            except ValueError:
+                timestamp_value = 0
+
+        lines.extend(
+            [
+                "# HELP gateway_metrics_last_updated_timestamp Last metrics update timestamp (unix seconds)",
+                "# TYPE gateway_metrics_last_updated_timestamp gauge",
+                f"gateway_metrics_last_updated_timestamp {timestamp_value}",
+            ]
+        )
+
+        return "\n".join(lines) + "\n"
+
     def reset(self) -> None:
         """Reset counters for tests/debug sessions."""
         with self._lock:
@@ -100,4 +191,3 @@ class TelemetryMetrics:
 
 
 telemetry_metrics = TelemetryMetrics()
-

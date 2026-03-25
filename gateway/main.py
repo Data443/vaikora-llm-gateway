@@ -24,7 +24,9 @@ from gateway.policy.store import policy_store
 from gateway.services.policy_service import init_policy_engine
 from gateway.services.proxy_service import init_proxy_handler
 from gateway.api.admin import get_admin_router
+from gateway.api.agent_control import agent_control_router
 from gateway.api.public import public_router
+from gateway.services.agent_registry import agent_registry
 
 
 @asynccontextmanager
@@ -40,6 +42,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize persistent policy/entitlement cache
     await policy_store.initialize(audit_logger)
+    await agent_registry.initialize(audit_logger)
 
     # Initialize policy engine
     policy_engine = init_policy_engine(cyren_client, audit_logger)
@@ -102,6 +105,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # Include API routers
 admin_router = get_admin_router()
 app.include_router(admin_router)
+app.include_router(agent_control_router)
 app.include_router(public_router)
 
 

@@ -167,7 +167,51 @@ run_curl_with_status "Disable Email Classification Entitlement (Restore)" curl "
   -H "Content-Type: application/json" \
   -d '{"modules":{"email_classification":false},"changed_by":"phase2_verify","change_note":"restore email classification entitlement"}'
 
+run_curl_with_status "Create Managed Agent 1" curl "${ADMIN_HEADER_ARGS[@]}" -X POST http://localhost:8000/admin/agents/create \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"agent-1","display_name":"Agent 1","agent_type":"assistant","status":"ACTIVE","wrapped":false,"metadata":{"source":"phase2_verify"},"changed_by":"phase2_verify"}'
+
+run_curl_with_status "Wrap Managed Agent 2" curl "${ADMIN_HEADER_ARGS[@]}" -X POST http://localhost:8000/admin/agents/wrap \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"agent-2","display_name":"Agent 2","agent_type":"assistant","status":"ACTIVE","metadata":{"source":"phase2_verify"},"changed_by":"phase2_verify"}'
+
+run_curl_with_status "Create A2A Link (agent-1 -> agent-2)" curl "${ADMIN_HEADER_ARGS[@]}" -X POST http://localhost:8000/admin/agents/link \
+  -H "Content-Type: application/json" \
+  -d '{"source_agent_id":"agent-1","target_agent_id":"agent-2","protocol":"A2A","status":"ACTIVE","metadata":{"source":"phase2_verify"},"changed_by":"phase2_verify"}'
+
+run_curl_with_status "Create A2A Interaction" curl "${ADMIN_HEADER_ARGS[@]}" -X POST http://localhost:8000/admin/a2a/interactions \
+  -H "Content-Type: application/json" \
+  -d '{"source_agent_id":"agent-1","target_agent_id":"agent-2","payload":{"intent":"handoff","message":"please continue this task"},"metadata":{"source":"phase2_verify"},"created_by":"phase2_verify"}'
+
+LATEST_A2A_INTERACTION_ID="$(curl -s "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/admin/a2a/interactions?limit=1" | python -c 'import json,sys; raw=sys.stdin.read().strip() or "{}"; 
+try:
+    payload=json.loads(raw)
+except Exception:
+    payload={}
+items=payload.get("interactions") or []
+print(items[0].get("interaction_id","") if items and isinstance(items[0],dict) else "")')"
+
+if [ -n "$LATEST_A2A_INTERACTION_ID" ]; then
+  run_curl_with_status "Approve A2A Interaction" curl "${ADMIN_HEADER_ARGS[@]}" -X POST "http://localhost:8000/admin/a2a/interactions/${LATEST_A2A_INTERACTION_ID}/approve" \
+    -H "Content-Type: application/json" \
+    -d '{"reviewed_by":"phase2_verify","reason":"approved during verification","metadata":{"source":"phase2_verify"}}'
+
+  run_curl_with_status "Block A2A Interaction (status update)" curl "${ADMIN_HEADER_ARGS[@]}" -X POST "http://localhost:8000/admin/a2a/interactions/${LATEST_A2A_INTERACTION_ID}/block" \
+    -H "Content-Type: application/json" \
+    -d '{"reviewed_by":"phase2_verify","reason":"blocked during verification","metadata":{"source":"phase2_verify"}}'
+
+  run_curl_with_status "Get A2A Interaction" curl "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/admin/a2a/interactions/${LATEST_A2A_INTERACTION_ID}"
+else
+  section "A2A Interaction Checks"
+  echo "Skipped (could not resolve interaction_id from /admin/a2a/interactions)"
+  echo ""
+fi
+
 if [ -n "${OPENAI_EFFECTIVE_KEY}" ]; then
+  run_curl_with_status "Managed Agent Proxy Test (Safe Prompt)" curl -X POST http://localhost:8000/agents/agent-1/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello from managed agent\"}]}"
+
   run_curl_with_status "OpenAI Proxy Test (Safe Prompt)" curl -X POST http://localhost:8000/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello\"}]}"
@@ -234,6 +278,7 @@ fi
 run_curl_with_status "Audit Log Query" curl "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/log?limit=3"
 run_curl_with_status "Gateway Event Query" curl "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/events?limit=5"
 run_curl_with_status "Gateway Metrics Query" curl "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/metrics"
+run_curl_with_status "Gateway Metrics (Prometheus) Query" curl "${ADMIN_HEADER_ARGS[@]}" "http://localhost:8000/audit/metrics/prometheus"
 
 LATEST_REQUEST_ID="$(curl -s "${ADMIN_HEADER_ARGS[@]}" http://localhost:8000/audit/events?limit=1 | python -c 'import json,sys; raw=sys.stdin.read().strip() or "{}"; 
 try:
@@ -260,6 +305,3 @@ else
 fi
 
 section "Done"
-
-
-

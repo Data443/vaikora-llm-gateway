@@ -104,3 +104,20 @@ def test_content_filter_credit_card_uses_luhn() -> None:
 
     valid = filter_engine.check_pii("Card 4111 1111 1111 1111")
     assert any(item["type"] == "CREDIT_CARD" for item in valid)
+
+
+@pytest.mark.asyncio
+async def test_metrics_prometheus_endpoint_requires_admin_key_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prometheus metrics endpoint should enforce admin auth when enabled."""
+    monkeypatch.setattr(settings, "admin_auth_enabled", True)
+    monkeypatch.setattr(settings, "admin_api_key", "test-admin-key")
+
+    with pytest.raises(HTTPException) as exc:
+        await public_api.get_gateway_metrics_prometheus(_build_request())
+    assert exc.value.status_code == 401
+
+    ok_request = _build_request(headers={"x-admin-key": "test-admin-key"})
+    response = await public_api.get_gateway_metrics_prometheus(ok_request)
+    assert response.status_code == 200

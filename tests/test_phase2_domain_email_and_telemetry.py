@@ -80,3 +80,20 @@ def test_telemetry_metrics_records_decisions_and_latency() -> None:
     assert snap["block_type_counts"]["content_filter"] == 1
     assert snap["latency_ms"]["count"] == 2
     assert snap["latency_ms"]["max"] == 200
+
+
+def test_telemetry_prometheus_export_contains_core_metrics() -> None:
+    telemetry_metrics.reset()
+    telemetry_metrics.record_event(
+        decision="BLOCK",
+        provider="openai",
+        response_time_ms=80,
+        attributes={"block_type": "content_filter"},
+        reason="blocked for test",
+    )
+
+    content = telemetry_metrics.to_prometheus()
+    assert "gateway_event_total 1" in content
+    assert 'gateway_decision_total{decision="BLOCK"} 1' in content
+    assert 'gateway_provider_total{provider="openai"} 1' in content
+    assert "gateway_response_latency_ms_max 80" in content

@@ -7,7 +7,7 @@ Production-ready LLM reverse-proxy security gateway. The gateway intercepts ever
 **Status**
 - Phase 1: Production-ready prototype complete
 - Phase 2 production track: provider adapters + admin auth + entitlement limits implemented
-- Test suite: 57 tests passing
+- Test suite: 76 tests passing
 - End-to-end verification: OpenAI + Cyren IPRep/URLF confirmed
 
 ---
@@ -18,6 +18,8 @@ Production-ready LLM reverse-proxy security gateway. The gateway intercepts ever
 - PII detection (SSN, email, phone, credit card, IP, passport, bank account)
 - Malicious prompt detection (jailbreak and injection patterns)
 - Semantic abuse detection module (entitlement-gated)
+- Domain risk scoring module (entitlement-gated)
+- Email classification risk module (entitlement-gated)
 - Data443 Cyren IP reputation and URL classification
 - Deterministic policy engine (no LLM in the decision path)
 - L1 in-memory + L2 Redis caching for Cyren lookups
@@ -30,6 +32,11 @@ Production-ready LLM reverse-proxy security gateway. The gateway intercepts ever
 - Entitlement-aware input/output size limits
 - Multi-provider adapter layer (OpenAI, Anthropic, Gemini, OpenRouter)
 - Structured gateway event stream (`/audit/events`)
+- Telemetry metrics endpoint (`/audit/metrics`)
+- Prometheus metrics endpoint (`/audit/metrics/prometheus`)
+- Managed agent registry (`create/wrap/list/get`)
+- A2A link + interaction governance APIs (create/approve/block/get)
+- Managed-agent proxy route (`/agents/{agent_id}/v1/chat/completions`)
 - JSON response inspection for policy enforcement
 
 ---
@@ -123,8 +130,12 @@ This verifies:
 - policy versioning and rollback endpoints
 - entitlement update and provider gating behavior
 - semantic detector entitlement/policy enforcement path
+- domain risk policy/entitlement enforcement path
+- email classification policy/entitlement enforcement path
+- managed agent create/wrap + A2A link/interaction workflow
 - optional Anthropic/Gemini/OpenRouter checks (if keys are configured)
 - structured gateway event query endpoint
+- telemetry metrics endpoint + Prometheus metrics endpoint
 - interaction approve/block workflow (`/admin/interactions/{request_id}`)
 - full test suite
 
@@ -162,7 +173,7 @@ python -m pytest -q
 ```
 
 Note: Unit tests are mocked and do not call OpenAI or Cyren directly.
-When `ADMIN_AUTH_ENABLED=true`, `/audit/log` and `/audit/events` also require `x-admin-key`.
+When `ADMIN_AUTH_ENABLED=true`, `/audit/log`, `/audit/events`, and `/audit/metrics*` require `x-admin-key`.
 
 ---
 
@@ -225,6 +236,10 @@ POSTGRES_PORT=5432
 POSTGRES_DB=data443_audit
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=
+AUDIT_RETENTION_DAYS=30
+AUDIT_MASK_SENSITIVE_FIELDS=true
+AUDIT_REDACT_MESSAGE_CONTENT=false
+AUDIT_MAX_STRING_LENGTH=4000
 
 # Policy Thresholds
 ALLOW_THRESHOLD=80
@@ -257,6 +272,9 @@ Public:
 | `GET /health` | Health check and component status |
 | `GET /audit/log` | Query audit log |
 | `GET /audit/events` | Query structured gateway events |
+| `GET /audit/metrics` | Query gateway telemetry snapshot (JSON) |
+| `GET /audit/metrics/prometheus` | Query gateway telemetry in Prometheus format |
+| `POST /agents/{agent_id}/v1/chat/completions` | Managed-agent proxy path |
 | `* /{path:path}` | Proxy to target LLM endpoint |
 
 Admin:
@@ -271,12 +289,26 @@ Admin:
 | `PUT /admin/policies/injection` | Update injection policy |
 | `GET /admin/policies/semantic` | Get semantic detection policy |
 | `PUT /admin/policies/semantic` | Update semantic detection policy |
+| `GET /admin/policies/domain-risk` | Get domain risk scoring policy |
+| `PUT /admin/policies/domain-risk` | Update domain risk scoring policy |
+| `GET /admin/policies/email-classification` | Get email classification policy |
+| `PUT /admin/policies/email-classification` | Update email classification policy |
 | `GET /admin/policies/jwt` | Get JWT auth policy |
 | `PUT /admin/policies/jwt` | Update JWT auth policy |
 | `GET /admin/policies/{name}/versions` | List policy versions |
 | `POST /admin/policies/{name}/rollback` | Rollback to previous policy version |
 | `GET /admin/entitlements` | Get entitlement configuration |
 | `PUT /admin/entitlements` | Update entitlement configuration |
+| `POST /admin/agents/create` | Create or update managed agent |
+| `POST /admin/agents/wrap` | Wrap external agent into control plane |
+| `GET /admin/agents` | List managed agents |
+| `GET /admin/agents/{agent_id}` | Get managed agent details |
+| `POST /admin/agents/link` | Create/update A2A link between agents |
+| `GET /admin/agents/links` | List A2A links |
+| `POST /admin/a2a/interactions` | Create A2A interaction |
+| `POST /admin/a2a/interactions/{interaction_id}/approve` | Approve A2A interaction |
+| `POST /admin/a2a/interactions/{interaction_id}/block` | Block A2A interaction |
+| `GET /admin/a2a/interactions/{interaction_id}` | Get A2A interaction |
 | `POST /admin/interactions/{request_id}/approve` | Mark interaction as approved |
 | `POST /admin/interactions/{request_id}/block` | Mark interaction as blocked |
 | `GET /admin/interactions/{request_id}` | Get interaction review status |
