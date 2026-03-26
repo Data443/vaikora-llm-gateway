@@ -24,7 +24,7 @@ The gateway sits in front of upstream LLM providers and enforces deterministic c
 
 ---
 
-## 📋 Current Build Status &nbsp;*(March 26, 2026)*
+## 📋 Current Build Status &nbsp;*
 
 | Metric | Result |
 |--------|--------|
