@@ -1,117 +1,224 @@
-# Data443 LLM Security Gateway
+<div align="center">
 
-Production-ready LLM reverse-proxy security gateway. The gateway intercepts every request and response, evaluates deterministic security policies, and enforces ALLOW/BLOCK/CONSTRAIN decisions before traffic reaches the LLM.
+<br/>
 
----
+<img src="https://img.shields.io/badge/Data443-LLM%20Security%20Gateway-0a192f?style=for-the-badge&logo=shield&logoColor=38bdf8" height="42"/>
 
-**Status**
-- Phase 1: Production-ready prototype complete
-- Phase 2 implementation scope in this repo: verified (policy lifecycle, entitlements, content controls, telemetry, managed-agent governance)
-- Test suite: 87 tests passing
-- End-to-end verification: OpenAI + Cyren IPRep/URLF confirmed, including managed-agent proxy path
+<br/><br/>
 
----
+**Production-ready LLM reverse-proxy gateway for security, governance, and observability.**
 
-**Key Capabilities**
-- Reverse-proxy traffic interception and normalization
-- Optional JWT authentication on inbound requests
-- PII detection (SSN, email, phone, credit card, IP, passport, bank account)
-- Malicious prompt detection (jailbreak and injection patterns)
-- Semantic abuse detection module (entitlement-gated)
-- Domain risk scoring module (entitlement-gated)
-- Email classification risk module (entitlement-gated)
-- Data443 Cyren IP reputation and URL classification
-- Deterministic policy engine (no LLM in the decision path)
-- L1 in-memory + L2 Redis caching for Cyren lookups
-- Immutable audit log in PostgreSQL
-- Circuit breaker for external dependency failures
-- Admin API for hot policy updates
-- Sensitive policy fields are redacted in admin API responses
-- Policy versioning with rollback support
-- Entitlement-aware provider/model enforcement
-- Entitlement-aware input/output size limits
-- Multi-provider adapter layer (OpenAI, Anthropic, Gemini, OpenRouter)
-- Structured gateway event stream (`/audit/events`)
-- Telemetry metrics endpoint (`/audit/metrics`)
-- Prometheus metrics endpoint (`/audit/metrics/prometheus`)
-- Optional OpenTelemetry trace hooks (policy + upstream spans)
-- Managed agent registry (`create/wrap/list/get`)
-- A2A link + interaction governance APIs (create/approve/block/get)
-- Approved-link enforcement before A2A interaction creation
-- Agent metadata policy constraints for source->target interaction rules
-- Agent interaction retention + time-window filtering
-- Managed-agent proxy route (`/agents/{agent_id}/v1/chat/completions`)
-- JSON response inspection for policy enforcement
-- Detector/cache/error telemetry counters + agent governance Prometheus counters
+The gateway sits in front of upstream LLM providers and enforces deterministic controls before any prompt reaches the model.
+
+<br/>
+
+![Build](https://img.shields.io/badge/Pytest-81%20Passed-22c55e?style=flat-square&logo=pytest&logoColor=white)
+![Checks](https://img.shields.io/badge/Checks-46%20%2F%2049%20Passed-22c55e?style=flat-square&logo=checkmarx&logoColor=white)
+![Skipped](https://img.shields.io/badge/Skipped-3%20Optional-f59e0b?style=flat-square)
+![Status](https://img.shields.io/badge/Status-Operational-38bdf8?style=flat-square&logo=statuspage&logoColor=white)
+![License](https://img.shields.io/badge/License-Data443%20Proprietary-64748b?style=flat-square)
+
+<br/>
+
+</div>
 
 ---
 
-**Architecture (High Level)**
+## 📋 Current Build Status &nbsp;*(March 26, 2026)*
 
-Current build (text diagram):
+| Metric | Result |
+|--------|--------|
+| Core gateway implementation | ✅ Complete and operational |
+| Pytest suite | ✅ **81 passed** |
+| Automated verification checks | ✅ **46 passed** / 3 skipped / 0 failed (49 total) |
+| OpenAI proxy flow | ✅ Verified and working |
+| Managed-agent proxy flow | ✅ Verified and working |
+| Optional provider checks | ⚠️ Skipped when API keys not configured (`Anthropic`, `Gemini`, `OpenRouter`) |
+
+---
+
+## 🔍 What This System Does
+
+This gateway protects and governs LLM traffic by:
+
+- intercepting requests/responses
+- enforcing policy and entitlement rules
+- applying deterministic security detection
+- routing to the selected provider
+- writing immutable audit/event records
+- exposing JSON and Prometheus telemetry
+
+This means clients use one stable API surface, while operations get centralized security and full traceability.
+
+---
+
+## 🏗 High-Level Architecture
 
 ```text
-                           +-----------------------------------+
-                           |         Control (Vaikora)         |
-                           |-----------------------------------|
-                           | Agent Mgmt                        |
-                           | Interaction Mgmt                  |
-                           | Policy / Entitlement Mgmt         |
-                           | Audit / Metrics Access            |
-                           +----------------+------------------+
-                                            |
-                create/wrap/list/get        | approve/block/review
-                                            v
-+-----------------------------------+   +-----------------------------------+
-|               Agents              |   |      Enforcement (Gateway)        |
-|-----------------------------------|   |-----------------------------------|
-| agent-1  <---- A2A ---->  agent-2 |-->| Ingress:                          |
-| agent-2  <---- A2A ---->  agent-3 |   | - /v1/chat/completions            |
-+-----------------------------------+   | - /agents/{agent_id}/v1/chat/...  |
-                                        |                                    |
-                                        | Request pipeline:                  |
-                                        | 1) Optional JWT auth               |
-                                        | 2) Entitlement checks              |
-                                        | 3) Content filter                  |
-                                        |    - PII                           |
-                                        |    - jailbreak / injection         |
-                                        |    - semantic / domain / email     |
-                                        | 4) Cyren policy scoring            |
-                                        | 5) Decision: ALLOW/BLOCK/CONSTRAIN |
-                                        | 6) Provider adapter + proxy        |
-                                        | 7) Response inspection             |
-                                        | 8) Audit + telemetry emit          |
-                                        +----------------+-------------------+
-                                                         |
-                                                         v
-                                 +-----------------------------------------+
-                                 |            Provider Router              |
-                                 |-----------------------------------------|
-                                 | OpenAI | Anthropic | Gemini | OpenRouter|
-                                 +-----------------------------------------+
+Client / App
+    |
+    v
++---------------------------------------------------+
+|                Data443 LLM Gateway                |
+|---------------------------------------------------|
+| Ingress:                                          |
+| - /v1/chat/completions                            |
+| - /agents/{agent_id}/v1/chat/completions          |
+|                                                   |
+| Request pipeline:                                 |
+| 1) Optional JWT auth                              |
+| 2) Entitlements (provider/model/limits)           |
+| 3) Content filter (PII/jailbreak/injection/...)   |
+| 4) Cyren risk intelligence (IP + URL)             |
+| 5) Decision (ALLOW/ALLOW_LOG/CONSTRAIN/BLOCK)     |
+| 6) Provider adapter + upstream proxy              |
+| 7) Response inspection                            |
+| 8) Audit/events/telemetry emit                    |
++-----------------------------+---------------------+
+                              |
+                              v
+       OpenAI / Anthropic / Gemini / OpenRouter
+
+Supporting stores:
+- Redis (L1/L2 cache path)
+- PostgreSQL (audit, versions, events, interactions)
 ```
 
-Flow summary:
-1. Client or managed agent sends request to gateway ingress.
-2. Gateway enforces auth, entitlements, and deterministic policy controls.
-3. Allowed traffic is normalized and routed to the selected upstream provider.
-4. Response is normalized back to OpenAI-compatible shape.
-5. Audit/events/metrics are written for governance and observability.
+---
+
+## 🔄 Prompt Lifecycle *(Step-by-Step)*
+
+When a user sends a prompt:
+
+| Step | Action |
+|:----:|--------|
+| 1 | Request enters gateway endpoint |
+| 2 | Gateway creates `request_id` and extracts context (IP, model, provider hint) |
+| 3 | Optional JWT auth runs if enabled |
+| 4 | Entitlements are enforced — provider enabled? model allowed? input/output limits within policy? |
+| 5 | Content filter evaluates request text — PII, jailbreak/injection, semantic abuse, domain risk, email-risk classification |
+| 6 | Cyren checks execute (`IPRep` and `URLF`) with cache and circuit breaker |
+| 7 | Policy engine returns decision: `ALLOW`, `ALLOW_LOG`, `CONSTRAIN`, or `BLOCK` |
+| 8 | If blocked, gateway returns `403` with structured error |
+| 9 | If allowed/constrained, provider adapter transforms request and forwards upstream |
+| 10 | Upstream response is normalized to OpenAI-compatible output shape when required |
+| 11 | Response content is inspected again for policy violations |
+| 12 | Gateway writes audit/event records and updates telemetry metrics |
+| 13 | Final response is returned to the client |
 
 ---
 
-**Decision Logic**
+## ⚖️ Decision Model
 
-| Cyren Score | Trust Level | Action |
-|-------------|-------------|--------|
-| 80-100 | HIGH | ALLOW |
-| 50-79 | MEDIUM | ALLOW with logging |
-| 20-49 | LOW | CONSTRAIN |
-| 0-19 | CRITICAL | BLOCK |
+### Cyren Score Policy Thresholds
+
+| Score Range | Result |
+|:-----------:|:------:|
+| 80 – 100 | ✅ `ALLOW` |
+| 50 – 79 | 📋 `ALLOW_LOG` |
+| 20 – 49 | ⚠️ `CONSTRAIN` |
+| 0 – 19 | 🚫 `BLOCK` |
+
+### Content Policy Behavior
+
+If request/response content matches enabled rules at or above severity threshold, configured action is enforced:
+
+| Action | Description |
+|--------|-------------|
+| `BLOCK` | Request is rejected outright |
+| `CONSTRAIN` | Request is modified and forwarded under constraint |
+| `LOG_ONLY` | Request is logged and passed through unchanged |
 
 ---
 
-**Quick Start (Docker)**
+## 🛡 Key Capabilities
+
+<details open>
+<summary><strong>Security Controls</strong></summary>
+
+<br/>
+
+- PII detection: SSN, email, phone, credit card (Luhn), IP, passport, bank account
+- Jailbreak/injection pattern checks
+- Semantic policy bypass / prompt exfiltration detection
+- Domain-risk heuristic detection
+- Email-risk/phishing intent classification
+- Optional JWT request authentication
+
+</details>
+
+<details open>
+<summary><strong>Governance Controls</strong></summary>
+
+<br/>
+
+- Versioned policies with rollback
+- Versioned entitlements with module/provider/limit controls
+- Admin auth hardening (`x-admin-key`) when enabled
+- Managed-agent registry and A2A interaction governance
+- Interaction review workflow (`approve` / `block` / `get`)
+
+</details>
+
+<details open>
+<summary><strong>Provider Layer</strong></summary>
+
+<br/>
+
+- Provider router and adapters:
+  - OpenAI
+  - Anthropic
+  - Gemini
+  - OpenRouter
+- Request/response normalization for cross-provider compatibility
+
+</details>
+
+<details open>
+<summary><strong>Reliability + Observability</strong></summary>
+
+<br/>
+
+- Redis-backed two-level caching
+- Circuit breaker around external threat-intel dependency
+- Immutable PostgreSQL audit/event persistence
+- Metrics endpoints:
+  - JSON snapshot
+  - Prometheus exposition
+- Optional OpenTelemetry hooks
+
+</details>
+
+---
+
+## 🌐 API Surface
+
+### Public Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Root |
+| `GET` | `/health` | Health check |
+| `GET` | `/audit/log` | Audit log |
+| `GET` | `/audit/events` | Audit events |
+| `GET` | `/audit/metrics` | JSON metrics snapshot |
+| `GET` | `/audit/metrics/prometheus` | Prometheus metrics exposition |
+| `POST` | `/agents/{agent_id}/v1/chat/completions` | Managed-agent proxy |
+| `ANY` | `/{path:path}` | Gateway proxy (catch-all) |
+
+### Admin Endpoints
+
+> Requires `x-admin-key` only when `ADMIN_AUTH_ENABLED=true`
+
+- Policy CRUD + versioning + rollback
+- Entitlement read/update
+- Managed agent create/wrap/list/get
+- A2A link and interaction create/list/get/review
+- Interaction review endpoints (`/admin/interactions/{request_id}/...`)
+
+---
+
+## 🚀 Quick Start
 
 ```bash
 git clone https://github.com/joseph88gomez/data443-llm-gateway.git
@@ -121,341 +228,111 @@ docker-compose up -d --build
 curl http://localhost:8000/health
 ```
 
-Note: Set `LLM_ENDPOINT` to `https://api.openai.com` (no `/v1`). For testing, set `LLM_API_KEY`. For pass-through keys, leave `LLM_API_KEY` empty and send `Authorization: Bearer <key>` from the client.
+---
+
+## ⚙️ Configuration Notes
+
+Important environment variables:
+
+| Category | Variables |
+|----------|-----------|
+| Provider | `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_API_KEY` |
+| Provider Keys | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` |
+| Admin Auth | `ADMIN_AUTH_ENABLED`, `ADMIN_API_KEY` |
+| JWT | `JWT_ENABLED`, `JWT_SECRET`, `JWT_ISSUER`, `JWT_AUDIENCE` |
+| Thresholds | `ALLOW_THRESHOLD`, `ALLOW_LOG_THRESHOLD`, `CONSTRAIN_THRESHOLD` |
+| Stores | Redis and PostgreSQL connection settings |
+
+> `CTAS_URL`/`CTAS_TIMEOUT` are present in config for extension scenarios.
 
 ---
 
-**Health Check Response**
+## 🧪 Testing and Verification
 
-```json
-{
-  "status": "healthy",
-  "circuit_breaker": "closed",
-  "cache_connected": true,
-  "audit_connected": true
-}
-```
+Test layout is documented in [tests/README.md](tests/README.md).
 
----
-
-**Phase 1 Verification (Single Script)**
+### 1 · Full automated verification *(recommended)*
 
 ```bash
-bash tests/phase1_verify.sh
+bash tests/run_all_tests.sh
 ```
 
-This runs:
-- Docker rebuild + startup
-- Health check
-- Pytest suite
-- PII policy tests (BLOCK + LOG_ONLY)
-- OpenAI proxy check
-- Red-team prompt suite
+Runs:
+- Docker rebuild/start
+- health checks
+- pytest (`tests/py/test_*.py`)
+- API/governance checks
+- provider optional checks (if keys set)
+- summary with pass/fail/skip
 
-Red-team results are saved to:
-`tools/redteam_results_YYYYMMDD_HHMMSS.jsonl`
-
----
-
-**Phase 2 Foundation Verification**
+### 2 · Live interactive LLM testing through gateway
 
 ```bash
-bash documents/setup_and_run/phase2_verify.sh
+LIVE_SHOW_RAW=true bash tests/live_gateway_console.sh
 ```
 
-This verifies:
-- policy versioning and rollback endpoints
-- entitlement update and provider gating behavior
-- semantic detector entitlement/policy enforcement path
-- domain risk policy/entitlement enforcement path
-- email classification policy/entitlement enforcement path
-- managed agent create/wrap + A2A link/interaction workflow
-- optional Anthropic/Gemini/OpenRouter checks (if keys are configured)
-- structured gateway event query endpoint
-- telemetry metrics endpoint + Prometheus metrics endpoint
-- interaction approve/block workflow (`/admin/interactions/{request_id}`)
-- full test suite
+Runs full verification first, then opens interactive prompt.
 
-**Client-Facing Verification Report (Single Command)**
+- Shows raw HTTP/JSON output (`LIVE_SHOW_RAW=true`)
+- Can force live prompt even on verification failure with `ALLOW_LIVE_ON_FAIL=true`
+
+### 3 · Pytest only
 
 ```bash
-bash documents/setup_and_run/generate_client_report.sh
-```
-
-Output:
-- markdown report: `documents/reports/client_exec_readout_YYYYMMDD_HHMMSS.md`
-- raw run artifacts: `documents/reports/artifacts_YYYYMMDD_HHMMSS/`
-- report now embeds full raw check outputs (including LLM proxy response bodies)
-
----
-
-**Admin Policy Updates**
-
-```bash
-curl -X PUT http://localhost:8000/admin/policies/pii \
-  -H "Content-Type: application/json" \
-  -d '{"action":"LOG_ONLY","changed_by":"admin"}'
-```
-
-Policy and entitlement changes are versioned in PostgreSQL when connected.
-
----
-
-**Testing**
-
-Run the full test suite:
-
-```bash
-python -m pytest -q
-```
-
-Note: Unit tests are mocked and do not call OpenAI or Cyren directly.
-When `ADMIN_AUTH_ENABLED=true`, `/audit/log`, `/audit/events`, and `/audit/metrics*` require `x-admin-key`.
-
----
-
-**Verification (Real Calls)**
-
-- End-to-end verification: `tests/phase1_verify.sh`
-- OpenAI-only check: `documents/setup_and_run/openai_gateway_test.sh`
-- PowerShell version: `documents/setup_and_run/phase1_verify.ps1`
-
-These scripts rebuild containers, run health checks, validate PII policy behavior, execute tests, and perform real OpenAI and Cyren calls. OpenAI requires a key with active quota.
-
-**Runbook**
-
-- Local/VPS operations runbook: `documents/runbook.md`
-- Production baseline checklist: enable `ADMIN_AUTH_ENABLED=true`, set `ADMIN_API_KEY`, set strong `JWT_SECRET`, and set explicit CORS origins.
-
----
-
-**Configuration (.env)**
-
-```bash
-# Server
-HOST=0.0.0.0
-PORT=8000
-WORKERS=1
-LOG_LEVEL=INFO
-UPSTREAM_TIMEOUT_SECONDS=60.0
-TRUST_PROXY_HEADERS=false
-
-# CORS
-CORS_ALLOWED_ORIGINS=http://localhost,http://127.0.0.1
-CORS_ALLOWED_METHODS=GET,POST,PUT,PATCH,DELETE,OPTIONS
-CORS_ALLOWED_HEADERS=*
-CORS_ALLOW_CREDENTIALS=false
-
-# LLM Target
-LLM_PROVIDER=openai
-LLM_ENDPOINT=https://api.openai.com
-LLM_API_KEY=
-OPENAI_ENDPOINT=https://api.openai.com
-OPENAI_API_KEY=
-ANTHROPIC_ENDPOINT=https://api.anthropic.com
-ANTHROPIC_API_KEY=
-ANTHROPIC_API_VERSION=2023-06-01
-GEMINI_ENDPOINT=https://generativelanguage.googleapis.com
-GEMINI_API_KEY=
-OPENROUTER_ENDPOINT=https://openrouter.ai/api/v1
-OPENROUTER_API_KEY=
-
-# Cyren + CTAS
-CYREN_IPREP_URL=https://try-now-ipreputation.data443.io/ctipd/iprep
-CYREN_URLF_URL=https://try-now-urlcat.data443.io/ctwsd/websec
-CYREN_API_KEY=
-CYREN_TIMEOUT=5.0
-CYREN_RETRY_ATTEMPTS=2
-CTAS_URL=https://try-now-antispam.data443.io/ctasd/ClassifyMessage_Inline
-CTAS_TIMEOUT=5.0
-
-# Redis Cache
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_DB=0
-REDIS_PASSWORD=
-REDIS_L1_TTL=300
-REDIS_L2_TTL=3600
-
-# PostgreSQL Audit Log
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=data443_audit
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=
-AUDIT_RETENTION_DAYS=30
-AUDIT_MASK_SENSITIVE_FIELDS=true
-AUDIT_REDACT_MESSAGE_CONTENT=false
-AUDIT_MAX_STRING_LENGTH=4000
-
-# Policy Thresholds
-ALLOW_THRESHOLD=80
-ALLOW_LOG_THRESHOLD=50
-CONSTRAIN_THRESHOLD=20
-
-# Circuit Breaker
-CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
-CIRCUIT_BREAKER_RECOVERY_TIMEOUT=60
-
-# JWT Authentication (Optional)
-JWT_ENABLED=false
-JWT_SECRET=your-secret-key-change-in-production
-JWT_ISSUER=data443-gateway
-JWT_AUDIENCE=data443-gateway
-
-# Admin API Authentication (Optional)
-ADMIN_AUTH_ENABLED=false
-ADMIN_API_KEY=
-
-# Agent Governance Hardening
-AGENT_LINK_ENFORCEMENT_ENABLED=true
-AGENT_INTERACTION_RETENTION_DAYS=30
-
-# OpenTelemetry (Optional)
-OTEL_ENABLED=false
-OTEL_SERVICE_NAME=data443-llm-gateway
-OTEL_EXPORTER_OTLP_ENDPOINT=
-OTEL_EXPORTER_TIMEOUT_SECONDS=5.0
+python -m pytest -q tests/py
 ```
 
 ---
 
-**API Endpoints**
+## 📁 Project Structure
 
-Public:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `GET /` | `GET` | Gateway information |
-| `GET /health` | `GET` | Health check and component status |
-| `GET /audit/log` | `GET` | Query audit log |
-| `GET /audit/events` | `GET` | Query structured gateway events |
-| `GET /audit/metrics` | `GET` | Query gateway telemetry snapshot (JSON) |
-| `GET /audit/metrics/prometheus` | `GET` | Query gateway telemetry in Prometheus format |
-| `POST /agents/{agent_id}/v1/chat/completions` | `POST` | Managed-agent proxy path |
-| `* /{path:path}` | `ANY` | Proxy to target LLM endpoint |
-
-Admin:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `GET /admin/policies` | `GET` | List all policies |
-| `GET /admin/policies/pii` | `GET` | Get PII detection policy |
-| `PUT /admin/policies/pii` | `PUT` | Update PII detection policy |
-| `GET /admin/policies/jailbreak` | `GET` | Get jailbreak policy |
-| `PUT /admin/policies/jailbreak` | `PUT` | Update jailbreak policy |
-| `GET /admin/policies/injection` | `GET` | Get injection policy |
-| `PUT /admin/policies/injection` | `PUT` | Update injection policy |
-| `GET /admin/policies/semantic` | `GET` | Get semantic detection policy |
-| `PUT /admin/policies/semantic` | `PUT` | Update semantic detection policy |
-| `GET /admin/policies/domain-risk` | `GET` | Get domain risk scoring policy |
-| `PUT /admin/policies/domain-risk` | `PUT` | Update domain risk scoring policy |
-| `GET /admin/policies/email-classification` | `GET` | Get email classification policy |
-| `PUT /admin/policies/email-classification` | `PUT` | Update email classification policy |
-| `GET /admin/policies/jwt` | `GET` | Get JWT auth policy |
-| `PUT /admin/policies/jwt` | `PUT` | Update JWT auth policy |
-| `GET /admin/policies/{name}/versions` | `GET` | List policy versions |
-| `POST /admin/policies/{name}/rollback` | `POST` | Rollback to previous policy version |
-| `GET /admin/entitlements` | `GET` | Get entitlement configuration |
-| `PUT /admin/entitlements` | `PUT` | Update entitlement configuration |
-| `POST /admin/agents/create` | `POST` | Create or update managed agent |
-| `POST /admin/agents/wrap` | `POST` | Wrap external agent into control plane |
-| `GET /admin/agents` | `GET` | List managed agents |
-| `GET /admin/agents/{agent_id}` | `GET` | Get managed agent details |
-| `POST /admin/agents/link` | `POST` | Create/update A2A link between agents |
-| `GET /admin/agents/links` | `GET` | List A2A links |
-| `POST /admin/a2a/interactions` | `POST` | Create A2A interaction |
-| `GET /admin/a2a/interactions` | `GET` | List A2A interactions |
-| `GET /admin/a2a/interactions/{interaction_id}` | `GET` | Get A2A interaction |
-| `POST /admin/a2a/interactions/{interaction_id}/approve` | `POST` | Approve A2A interaction |
-| `POST /admin/a2a/interactions/{interaction_id}/block` | `POST` | Block A2A interaction |
-| `POST /admin/interactions/{request_id}/approve` | `POST` | Mark interaction as approved |
-| `POST /admin/interactions/{request_id}/block` | `POST` | Mark interaction as blocked |
-| `GET /admin/interactions/{request_id}` | `GET` | Get interaction review status |
-| `DELETE /admin/policies/{name}` | `DELETE` | Delete a policy |
-| `POST /admin/policies/reset` | `POST` | Reset all policies |
-
----
-
-**Project Structure**
-
-```
+```text
 data443-llm-gateway/
   gateway/
-    main.py
     api/
-      public.py
-      admin.py
-      agent_control.py
     core/
-      config.py
-      logging.py
-      types.py
-    services/
-      proxy_service.py
-      policy_service.py
-      content_filter.py
-      jwt_auth.py
-      agent_registry.py
     integrations/
-      cyren_client.py
-      cache.py
-      audit.py
-      telemetry.py
-      event_schema.py
     policy/
-      store.py
     providers/
-      base.py
-      router.py
-      openai_provider.py
-      anthropic_provider.py
-      gemini_provider.py
-      openrouter_provider.py
+    services/
+    main.py
   tests/
-    test_gateway.py
-    test_phase2_policy_store.py
-    test_phase2_provider_adapters.py
-    test_phase2_observability_and_governance.py
-    test_phase3_agent_control.py
-    test_phase3_agent_proxy.py
-    test_phase3_agent_registry_hardening.py
-    phase1_verify.sh
-  documents/
-    setup_and_run/
-      phase2_verify.sh
-      generate_client_report.sh
-  tools/
-    redteam_prompts.jsonl
-    redteam_runner.py
+    README.md
+    run_all_tests.sh
+    live_gateway_console.sh
+    py/
+      test_all.py
+    sh/
+      all.sh
+      live.sh
   config/
-    settings.py  # compatibility shim
   docker-compose.yml
   Dockerfile
   requirements.txt
   pytest.ini
-  .env (create this)
 ```
 
 ---
 
-**Performance and Security Notes**
-- Cached decisions target sub-10ms latency
-- Circuit breaker prevents Cyren outages from blocking requests
-- Every decision is auditable and immutable in PostgreSQL
-- No LLM involved in security decisions
-- Admin API key auth is available via `ADMIN_AUTH_ENABLED=true`
+## ✅ Production Baseline Checklist
+
+- [ ] Enable admin auth: `ADMIN_AUTH_ENABLED=true` and set `ADMIN_API_KEY`
+- [ ] Enable JWT where required and set strong `JWT_SECRET`
+- [ ] Set explicit `CORS_ALLOWED_ORIGINS` (no wildcard + credentials)
+- [ ] Configure required provider API keys
+- [ ] Keep audit/metrics endpoints protected in deployment
+- [ ] Monitor Prometheus metrics and audit/event logs
 
 ---
 
-**License**
+<div align="center">
 
-Data443 - All rights reserved.
+<br/>
 
+**Data443 — All rights reserved.**
 
+<br/>
 
+![Data443](https://img.shields.io/badge/Data443-Security%20%26%20Governance-0a192f?style=for-the-badge&logoColor=38bdf8)
 
-
-
-
-
+</div>
