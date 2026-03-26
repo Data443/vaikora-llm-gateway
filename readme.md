@@ -24,7 +24,7 @@ The gateway sits in front of upstream LLM providers and enforces deterministic c
 
 ---
 
-## 📋 Current Build Status &nbsp;*
+## 📋 Current Build Status &nbsp;**
 
 | Metric | Result |
 |--------|--------|
