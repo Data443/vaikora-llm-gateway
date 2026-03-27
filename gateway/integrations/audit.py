@@ -21,6 +21,11 @@ _REDACTED_VALUE = "***REDACTED***"
 _SENSITIVE_EXACT_KEYS = {"password", "secret", "token", "api_key", "apikey", "authorization"}
 _SENSITIVE_KEY_FRAGMENTS = ("password", "secret", "token", "api_key", "apikey")
 _MESSAGE_CONTENT_KEYS = {"content", "prompt", "input", "system"}
+_CORE_SCHEMA_TABLES = (
+    "audit_log",
+    "policy_versions",
+    "entitlement_versions",
+)
 
 
 class AuditLogger:
@@ -51,6 +56,11 @@ class AuditLogger:
             # Legacy bootstrap fallback for older deployments without migrations.
             if settings.db_ddl_bootstrap_fallback:
                 await self._create_table()
+            elif not await self._core_schema_ready():
+                logger.warning(
+                    "Core DB schema is missing after migration step; applying bootstrap DDL fallback"
+                )
+                await self._create_table()
         except Exception as e:
             logger.warning(f"Failed to connect to PostgreSQL: {e}")
             self.connected = False
@@ -61,6 +71,31 @@ class AuditLogger:
             await self.pool.close()
             self.connected = False
             logger.info("Disconnected from PostgreSQL")
+
+    async def _core_schema_ready(self) -> bool:
+        """Return True when core audit/policy tables already exist."""
+        if not self.pool:
+            return False
+
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT c.relname AS table_name
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE c.relkind = 'r'
+                  AND n.nspname = current_schema()
+                  AND c.relname = ANY($1::text[])
+                """,
+                list(_CORE_SCHEMA_TABLES),
+            )
+
+        existing = {str(row["table_name"]) for row in rows}
+        missing = [name for name in _CORE_SCHEMA_TABLES if name not in existing]
+        if missing:
+            logger.warning("Missing core schema table(s): {}", ", ".join(missing))
+            return False
+        return True
 
     async def _create_table(self) -> None:
         """Create audit log table if not exists."""

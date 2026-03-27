@@ -1,14 +1,11 @@
 """
 Data443 LLM Gateway - Policy Evaluation Engine
-
 Determines ALLOW/BLOCK/CONSTRAIN decisions based on Cyren threat intelligence.
 Fully deterministic - no LLM in decision path.
 """
 
 from typing import Optional, Dict, Any
-
 from loguru import logger
-
 from gateway.core.config import settings
 from gateway.core.types import Decision
 from gateway.integrations.audit import AuditLogger
@@ -121,7 +118,7 @@ class PolicyEngine:
     ) -> int:
         """
         Calculate overall risk score from IP and URL responses.
-
+        
         Risk scoring:
         - IP risk level (0-100) - primary factor
         - URL category mapped to risk (0-100) - secondary factor
