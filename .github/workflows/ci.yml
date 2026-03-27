@@ -32,9 +32,20 @@ jobs:
           pip install pip-audit==2.7.3
           pip-audit -r requirements.txt --progress-spinner off
 
+      - name: Start gateway stack
+        run: |
+          docker compose up -d --build
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8000/health >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8000/health
+
       - name: Run unit tests
         run: |
-          python -m pytest -q --import-mode=importlib tests -o asyncio_default_fixture_loop_scope=function
+          python -m pytest -q --import-mode=importlib tests/py -o asyncio_default_fixture_loop_scope=function
 
       - name: Compile check
         run: |
@@ -43,3 +54,8 @@ jobs:
       - name: Build Docker image
         run: |
           docker build -t data443-llm-gateway:ci .
+
+      - name: Teardown gateway stack
+        if: always()
+        run: |
+          docker compose down -v
