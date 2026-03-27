@@ -89,4 +89,3 @@ jobs:
         if: always()
         run: |
           docker compose down -v
-git add .github/workflows/ci.yml
