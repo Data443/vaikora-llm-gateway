@@ -33,6 +33,30 @@ jobs:
           pip install pip-audit==2.7.3
           pip-audit -r requirements.txt --progress-spinner off
 
+      - name: Ensure Docker Compose is available
+        run: |
+          set -euxo pipefail
+          if docker compose version >/dev/null 2>&1; then
+            docker compose version
+            exit 0
+          fi
+          if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose --version
+            exit 0
+          fi
+
+          mkdir -p "$HOME/.docker/cli-plugins"
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64|amd64) bin_arch="x86_64" ;;
+            aarch64|arm64) bin_arch="aarch64" ;;
+            *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;
+          esac
+
+          curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-${bin_arch}" -o "$HOME/.docker/cli-plugins/docker-compose"
+          chmod +x "$HOME/.docker/cli-plugins/docker-compose"
+          docker compose version
+
       - name: Start gateway stack
         run: |
           set -euxo pipefail
@@ -40,12 +64,8 @@ jobs:
           compose() {
             if docker compose version >/dev/null 2>&1; then
               docker compose "$@"
-            elif command -v docker-compose >/dev/null 2>&1; then
-              docker-compose "$@"
             else
-              echo "No Docker Compose command found (docker compose or docker-compose)." >&2
-              docker --version || true
-              exit 1
+              docker-compose "$@"
             fi
           }
 
