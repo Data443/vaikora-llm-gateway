@@ -38,7 +38,21 @@ jobs:
           docker compose up -d --build
 
           ready=0
-          for i in {1..90}; do
+          for i in {1..45}; do
+            cid="$(docker compose ps -q gateway || true)"
+            if [ -n "$cid" ]; then
+              state="$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo unknown)"
+              restarts="$(docker inspect -f '{{.RestartCount}}' "$cid" 2>/dev/null || echo 0)"
+              if [ "$state" != "running" ] || [ "$restarts" -gt 2 ]; then
+                echo "Gateway container unhealthy (state=$state restarts=$restarts)."
+                docker compose ps || true
+                docker compose logs gateway --tail=200 || true
+                docker compose logs postgres --tail=120 || true
+                docker compose logs redis --tail=120 || true
+                exit 1
+              fi
+            fi
+
             if curl -fsS http://localhost:8000/health >/dev/null; then
               ready=1
               break
@@ -49,7 +63,7 @@ jobs:
           docker compose ps
 
           if [ "$ready" -ne 1 ]; then
-            echo "Gateway failed to become healthy. Printing logs..."
+            echo "Gateway failed to become healthy in time. Printing logs..."
             docker compose logs gateway --tail=200 || true
             docker compose logs postgres --tail=120 || true
             docker compose logs redis --tail=120 || true
