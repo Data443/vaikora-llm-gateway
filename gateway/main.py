@@ -5,7 +5,9 @@ Main FastAPI application that intercepts LLM API requests,
 evaluates security policy, and forwards to target endpoint.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
+from contextlib import suppress
 from typing import List
 
 import uvicorn
@@ -24,10 +26,26 @@ from gateway.integrations.audit import audit_logger
 from gateway.integrations.cache import cache
 from gateway.integrations.cyren_client import cyren_client
 from gateway.integrations.otel import initialize_otel, shutdown_otel
+from gateway.middleware.rate_limit import RateLimitMiddleware
 from gateway.policy.store import policy_store
 from gateway.services.agent_registry import agent_registry
 from gateway.services.policy_service import init_policy_engine
 from gateway.services.proxy_service import init_proxy_handler
+
+
+async def _retention_purge_loop(stop_event: asyncio.Event) -> None:
+    """Periodic retention purge task."""
+    interval = max(60, int(settings.audit_purge_interval_seconds))
+    while not stop_event.is_set():
+        try:
+            await audit_logger.purge_expired_records()
+        except Exception as exc:
+            logger.warning(f"Retention purge loop error: {exc}")
+
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            continue
 
 
 @asynccontextmanager
@@ -43,6 +61,15 @@ async def lifespan(app: FastAPI):
 
     # Connect to audit logger
     await audit_logger.connect()
+
+    retention_stop_event: asyncio.Event | None = None
+    retention_task: asyncio.Task | None = None
+    if settings.audit_purge_enabled:
+        retention_stop_event = asyncio.Event()
+        await audit_logger.purge_expired_records()
+        retention_task = asyncio.create_task(_retention_purge_loop(retention_stop_event))
+        app.state.retention_stop_event = retention_stop_event
+        app.state.retention_task = retention_task
 
     # Initialize persistent policy/entitlement cache
     await policy_store.initialize(audit_logger)
@@ -63,6 +90,14 @@ async def lifespan(app: FastAPI):
 
     # Cleanup
     logger.info("Shutting down Data443 LLM Gateway...")
+    retention_stop_event = getattr(app.state, "retention_stop_event", None)
+    retention_task = getattr(app.state, "retention_task", None)
+    if retention_stop_event is not None:
+        retention_stop_event.set()
+    if retention_task is not None:
+        retention_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await retention_task
     await cache.disconnect()
     await audit_logger.disconnect()
     shutdown_otel()
@@ -107,6 +142,7 @@ app.add_middleware(
     allow_headers=cors_headers or ["*"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(RateLimitMiddleware)
 
 # Include API routers
 admin_router = get_admin_router()
@@ -144,3 +180,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

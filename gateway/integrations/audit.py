@@ -14,6 +14,7 @@ from loguru import logger
 
 from gateway.core.config import settings
 from gateway.core.types import Decision
+from gateway.integrations.migrations import apply_migrations
 
 
 _REDACTED_VALUE = "***REDACTED***"
@@ -44,8 +45,12 @@ class AuditLogger:
             self.connected = True
             logger.info("Connected to PostgreSQL (audit log)")
 
-            # Create table if not exists
-            await self._create_table()
+            if settings.db_migrations_enabled:
+                await apply_migrations(self.pool)
+
+            # Legacy bootstrap fallback for older deployments without migrations.
+            if settings.db_ddl_bootstrap_fallback:
+                await self._create_table()
         except Exception as e:
             logger.warning(f"Failed to connect to PostgreSQL: {e}")
             self.connected = False
@@ -216,6 +221,83 @@ class AuditLogger:
                     ON agent_interactions(review_status);
             """)
             logger.info("Audit log table verified")
+
+    @staticmethod
+    def _rows_affected(command_result: str) -> int:
+        """
+        Parse asyncpg command tags (e.g. 'DELETE 42') to row count.
+        """
+        try:
+            return int(str(command_result).split()[-1])
+        except Exception:
+            return 0
+
+    async def purge_expired_records(self) -> Dict[str, int]:
+        """
+        Hard-delete expired data based on configured retention windows.
+        """
+        stats = {
+            "audit_log_deleted": 0,
+            "events_deleted": 0,
+            "interaction_reviews_deleted": 0,
+            "agent_interactions_deleted": 0,
+        }
+        if not self.connected:
+            return stats
+
+        retention_days = int(settings.audit_retention_days)
+        interaction_retention_days = int(settings.agent_interaction_retention_days)
+        if retention_days <= 0 and interaction_retention_days <= 0:
+            return stats
+
+        try:
+            async with self.pool.acquire() as conn:
+                async with conn.transaction():
+                    if retention_days > 0:
+                        result = await conn.execute(
+                            """
+                            DELETE FROM audit_log
+                            WHERE timestamp < NOW() - (($1::text || ' days')::interval)
+                            """,
+                            retention_days,
+                        )
+                        stats["audit_log_deleted"] = self._rows_affected(result)
+
+                        result = await conn.execute(
+                            """
+                            DELETE FROM llm_gateway_events
+                            WHERE timestamp < NOW() - (($1::text || ' days')::interval)
+                            """,
+                            retention_days,
+                        )
+                        stats["events_deleted"] = self._rows_affected(result)
+
+                        result = await conn.execute(
+                            """
+                            DELETE FROM interaction_reviews
+                            WHERE reviewed_at < NOW() - (($1::text || ' days')::interval)
+                            """,
+                            retention_days,
+                        )
+                        stats["interaction_reviews_deleted"] = self._rows_affected(result)
+
+                    if interaction_retention_days > 0:
+                        result = await conn.execute(
+                            """
+                            DELETE FROM agent_interactions
+                            WHERE created_at < NOW() - (($1::text || ' days')::interval)
+                            """,
+                            interaction_retention_days,
+                        )
+                        stats["agent_interactions_deleted"] = self._rows_affected(result)
+        except Exception as exc:
+            logger.warning(f"Retention purge failed: {exc}")
+            return stats
+
+        total_deleted = sum(stats.values())
+        if total_deleted > 0:
+            logger.info(f"Retention purge completed: {stats}")
+        return stats
 
     async def log_decision(
         self,

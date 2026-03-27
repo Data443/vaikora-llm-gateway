@@ -22,6 +22,35 @@ class Settings(BaseSettings):
         description="Timeout in seconds for upstream LLM provider calls",
     )
 
+    rate_limit_enabled: bool = Field(
+        default=False,
+        description="Enable gateway request rate limiting middleware",
+    )
+    rate_limit_window_seconds: int = Field(
+        default=60,
+        description="Rate limit window size in seconds",
+    )
+    rate_limit_storage: str = Field(
+        default="auto",
+        description="Rate limit backend: auto, redis, or memory",
+    )
+    rate_limit_redis_prefix: str = Field(
+        default="gw:ratelimit",
+        description="Redis key prefix for distributed rate limiting",
+    )
+    rate_limit_proxy_requests: int = Field(
+        default=120,
+        description="Max proxy requests per client within rate limit window",
+    )
+    rate_limit_admin_requests: int = Field(
+        default=300,
+        description="Max admin requests per client within rate limit window",
+    )
+    rate_limit_audit_requests: int = Field(
+        default=120,
+        description="Max audit/metrics requests per client within rate limit window",
+    )
+
     # CORS and proxy trust
     cors_allowed_origins: str = Field(
         default="http://localhost,http://127.0.0.1",
@@ -109,6 +138,14 @@ class Settings(BaseSettings):
     audit_max_string_length: int = Field(
         default=4000,
         description="Max string length in audit/event API responses; 0 disables truncation",
+    )
+    audit_purge_enabled: bool = Field(
+        default=True,
+        description="Enable scheduled background purge for expired audit/event records",
+    )
+    audit_purge_interval_seconds: int = Field(
+        default=3600,
+        description="How often to run background retention purge job (seconds)",
     )
 
     # Target LLM Configuration (OpenAI)
@@ -205,6 +242,24 @@ class Settings(BaseSettings):
         default="",
         description="Static admin API key (x-admin-key)"
     )
+    admin_auth_mode: str = Field(
+        default="api_key",
+        description="Admin auth mode: api_key, jwt, or api_key_or_jwt",
+    )
+    admin_allowed_ips: str = Field(
+        default="",
+        description="Comma-separated admin IP allowlist; empty disables allowlist",
+    )
+
+    # Database migrations
+    db_migrations_enabled: bool = Field(
+        default=True,
+        description="Apply SQL migrations on startup",
+    )
+    db_ddl_bootstrap_fallback: bool = Field(
+        default=False,
+        description="Run legacy CREATE TABLE bootstrap SQL after migrations",
+    )
 
     # Agent governance hardening
     agent_link_enforcement_enabled: bool = Field(
@@ -255,4 +310,3 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
-

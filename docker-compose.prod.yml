@@ -1,0 +1,25 @@
+# Data443 LLM Gateway - Production Compose Overlay
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# This overlay removes direct DB/Redis host exposure and binds gateway to loopback.
+
+services:
+  redis:
+    ports: []
+
+  postgres:
+    ports: []
+
+  gateway:
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      ADMIN_AUTH_ENABLED: ${ADMIN_AUTH_ENABLED:-true}
+      ADMIN_AUTH_MODE: ${ADMIN_AUTH_MODE:-api_key}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_STORAGE: ${RATE_LIMIT_STORAGE:-redis}
+      AUDIT_PURGE_ENABLED: ${AUDIT_PURGE_ENABLED:-true}
+      DB_MIGRATIONS_ENABLED: ${DB_MIGRATIONS_ENABLED:-true}
+      DB_DDL_BOOTSTRAP_FALLBACK: ${DB_DDL_BOOTSTRAP_FALLBACK:-false}
