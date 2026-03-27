@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: ["main"]
   pull_request:
@@ -88,3 +89,4 @@ jobs:
         if: always()
         run: |
           docker compose down -v
+git add .github/workflows/ci.yml
