@@ -34,13 +34,28 @@ jobs:
 
       - name: Start gateway stack
         run: |
+          set -euxo pipefail
           docker compose up -d --build
-          for i in {1..60}; do
+
+          ready=0
+          for i in {1..90}; do
             if curl -fsS http://localhost:8000/health >/dev/null; then
+              ready=1
               break
             fi
             sleep 2
           done
+
+          docker compose ps
+
+          if [ "$ready" -ne 1 ]; then
+            echo "Gateway failed to become healthy. Printing logs..."
+            docker compose logs gateway --tail=200 || true
+            docker compose logs postgres --tail=120 || true
+            docker compose logs redis --tail=120 || true
+            exit 1
+          fi
+
           curl -fsS http://localhost:8000/health
 
       - name: Run unit tests
