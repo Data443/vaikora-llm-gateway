@@ -12,7 +12,7 @@ The gateway sits in front of upstream LLM providers and enforces deterministic c
 
 <br/>
 
-![Build](https://img.shields.io/badge/Pytest-109%20Passed-22c55e?style=flat-square&logo=pytest&logoColor=white)
+![Build](https://img.shields.io/badge/Pytest-117%20Passed-22c55e?style=flat-square&logo=pytest&logoColor=white)
 ![Checks](https://img.shields.io/badge/Checks-46%20%2F%2049%20Passed-22c55e?style=flat-square&logo=checkmarx&logoColor=white)
 ![Skipped](https://img.shields.io/badge/Skipped-3%20Optional-f59e0b?style=flat-square)
 ![Status](https://img.shields.io/badge/Status-Operational-38bdf8?style=flat-square&logo=statuspage&logoColor=white)
@@ -29,7 +29,7 @@ The gateway sits in front of upstream LLM providers and enforces deterministic c
 | Metric | Result |
 |--------|--------|
 | Core gateway implementation | Complete and operational |
-| Pytest suite | **109 passed** |
+| Pytest suite | **117 passed** |
 | Automated verification checks | **46 passed** / 3 skipped / 0 failed (49 total) |
 | Security regression tests | **All 5 attack patterns blocked (403)** |
 | OpenAI proxy flow | Verified and working |
@@ -68,16 +68,19 @@ Client / App
 | - CORS + GZip                                     |
 |                                                   |
 | Request pipeline:                                 |
+| 0) Proxy API key auth (x-api-key header)          |
 | 1) Optional JWT auth (mandatory exp claim)        |
 | 2) Entitlements (provider/model/limits)           |
 | 3) Content filter (PII/jailbreak/injection/       |
 |    semantic/domain-risk/email-classification)      |
 | 4) Cyren risk intelligence (IP + URL)             |
+|    -> fail-closed when Cyren unavailable           |
 | 5) Decision (ALLOW/ALLOW_LOG/CONSTRAIN/BLOCK)     |
 | 6) Constraint engine (if CONSTRAIN)               |
-| 7) Provider adapter + upstream proxy              |
-| 8) Response inspection                            |
-| 9) Audit/events/telemetry emit                    |
+| 7) A2A interaction enforcement (agent routes)     |
+| 8) Provider adapter + upstream proxy              |
+| 9) Response inspection                            |
+| 10) Audit/events/telemetry emit                   |
 +-----------------------------+---------------------+
                               |
                               v
@@ -100,19 +103,21 @@ When a user sends a prompt:
 |:----:|--------|
 | 1 | Request enters gateway endpoint |
 | 2 | Rate limit + body size middleware checks |
-| 3 | Gateway creates `request_id` and extracts context (IP, model, provider hint) |
-| 4 | Optional JWT auth runs if enabled (requires valid `exp` claim) |
-| 5 | Entitlements enforced -- provider enabled? model allowed? input/output limits within policy? |
-| 6 | Content filter evaluates request text -- PII, jailbreak/injection, semantic abuse, domain risk, email classification |
-| 7 | Cyren checks execute (IPRep and URLF) with cache and circuit breaker |
-| 8 | Policy engine returns decision: ALLOW, ALLOW_LOG, CONSTRAIN, or BLOCK |
-| 9 | If blocked, gateway returns 403 with structured error |
-| 10 | If constrained, gateway clamps tokens/temperature, injects safety prompt, redacts matches |
-| 11 | Provider adapter transforms request and forwards upstream via pooled connection |
-| 12 | Upstream response is normalized to OpenAI-compatible output shape |
-| 13 | Response content is inspected again for policy violations |
-| 14 | Gateway writes audit/event records and updates telemetry metrics |
-| 15 | Final response is returned to the client |
+| 3 | Proxy API key validated (if `PROXY_API_KEY_ENABLED=true`) |
+| 4 | Gateway creates `request_id` and extracts context (IP, model, provider hint) |
+| 5 | Optional JWT auth runs if enabled (requires valid `exp` claim) |
+| 6 | Entitlements enforced -- provider enabled? model allowed? input/output limits within policy? |
+| 7 | Content filter evaluates request text -- PII, jailbreak/injection, semantic abuse, domain risk, email classification |
+| 8 | Cyren checks execute (IPRep and URLF) with cache and circuit breaker |
+| 9 | Policy engine returns decision: ALLOW, ALLOW_LOG, CONSTRAIN, or BLOCK; **fail-closed** if Cyren unavailable |
+| 10 | If blocked, gateway returns 403 with structured error |
+| 11 | If constrained, gateway clamps tokens/temperature, injects safety prompt, redacts matches |
+| 12 | For agent routes: A2A interaction ID validated as APPROVED (if `A2A_INTERACTION_ENFORCEMENT_ENABLED=true`) |
+| 13 | Provider adapter transforms request and forwards upstream via pooled connection |
+| 14 | Upstream response is normalized to OpenAI-compatible output shape |
+| 15 | Response content is inspected again for policy violations |
+| 16 | Gateway writes audit/event records and updates telemetry metrics |
+| 17 | Final response is returned to the client |
 
 ---
 
@@ -167,7 +172,9 @@ All enabled by default with BLOCK action:
 - Domain-risk heuristic detection (suspicious TLDs, punycode, keywords)
 - Email-risk/phishing intent classification
 - JWT authentication with mandatory expiry
+- Proxy API key authentication (`x-api-key` header for all proxy callers)
 - Request body size limit (configurable, default 10 MB)
+- Cyren fail-closed mode: blocks traffic when threat intelligence is unavailable
 
 </details>
 
@@ -180,7 +187,9 @@ All enabled by default with BLOCK action:
 - Versioned entitlements with module/provider/limit controls
 - Admin auth hardening (`x-admin-key` + IP allowlist) when enabled
 - Managed-agent registry and A2A interaction governance
+- **A2A interaction enforcement**: every agent proxy call requires an APPROVED `x-a2a-interaction-id`
 - Interaction review workflow (approve / block / get)
+- Compliance defaults fully configurable at deployment (retention, masking, redaction)
 
 </details>
 
@@ -272,8 +281,9 @@ Important environment variables:
 | Thresholds | `ALLOW_THRESHOLD`, `ALLOW_LOG_THRESHOLD`, `CONSTRAIN_THRESHOLD` |
 | Stores | Redis and PostgreSQL connection settings |
 | Audit | `AUDIT_RETENTION_DAYS`, `AUDIT_MASK_SENSITIVE_FIELDS`, `AUDIT_REDACT_MESSAGE_CONTENT` |
-| Cyren | `CYREN_IPREP_URL`, `CYREN_URLF_URL`, `CYREN_API_KEY` |
-| Agent Governance | `AGENT_LINK_ENFORCEMENT_ENABLED`, `AGENT_INTERACTION_RETENTION_DAYS` |
+| Cyren | `CYREN_IPREP_URL`, `CYREN_URLF_URL`, `CYREN_API_KEY`, `CYREN_FAIL_CLOSED` |
+| Proxy Auth | `PROXY_API_KEY_ENABLED`, `PROXY_API_KEY` |
+| Agent Governance | `AGENT_LINK_ENFORCEMENT_ENABLED`, `A2A_INTERACTION_ENFORCEMENT_ENABLED`, `AGENT_INTERACTION_RETENTION_DAYS` |
 | Telemetry | `OTEL_ENABLED`, `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
 
 ---
@@ -345,6 +355,10 @@ data443-llm-gateway/
 
 ## Production Baseline Checklist
 
+- [x] Cyren fail-closed mode: `CYREN_FAIL_CLOSED=true` (blocks when Cyren unavailable)
+- [x] Proxy API key auth: `PROXY_API_KEY_ENABLED=true` and set strong `PROXY_API_KEY`
+- [x] A2A interaction enforcement: `A2A_INTERACTION_ENFORCEMENT_ENABLED=true`
+- [x] Compliance defaults configurable at deployment (retention, masking, redaction)
 - [ ] Enable admin auth: `ADMIN_AUTH_ENABLED=true` and set strong `ADMIN_API_KEY`
 - [ ] Enable JWT where required and set strong `JWT_SECRET`
 - [ ] Set real passwords for `REDIS_PASSWORD` and `POSTGRES_PASSWORD`
@@ -353,7 +367,6 @@ data443-llm-gateway/
 - [ ] Use production overlay: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
 - [ ] Set `LOG_FORMAT=json` for structured log aggregation
 - [ ] Monitor `/health` endpoint and Prometheus metrics
-- [ ] Resolve 4 client-dependent decisions (Cyren fail mode, auth model, A2A enforcement, compliance defaults)
 
 ---
 

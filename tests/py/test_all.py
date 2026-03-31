@@ -46,6 +46,8 @@ def _env(name: str, default: str = "") -> str:
 ADMIN_AUTH_ENABLED = _env("ADMIN_AUTH_ENABLED", "false").lower() == "true"
 ADMIN_API_KEY = _env("ADMIN_API_KEY", "")
 LLM_API_KEY = _env("LLM_API_KEY", "") or _env("OPENAI_API_KEY", "")
+PROXY_API_KEY_ENABLED = _env("PROXY_API_KEY_ENABLED", "false").lower() == "true"
+PROXY_API_KEY = _env("PROXY_API_KEY", "")
 
 
 def _headers(admin: bool = False, auth: bool = False) -> Dict[str, str]:
@@ -54,6 +56,8 @@ def _headers(admin: bool = False, auth: bool = False) -> Dict[str, str]:
         h["x-admin-key"] = ADMIN_API_KEY
     if auth and LLM_API_KEY:
         h["Authorization"] = f"Bearer {LLM_API_KEY}"
+    if PROXY_API_KEY_ENABLED and PROXY_API_KEY and not admin:
+        h["x-api-key"] = PROXY_API_KEY
     return h
 
 
@@ -1918,6 +1922,7 @@ from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
 
 from gateway.api.public import public_router
+from gateway.core.config import settings as _proxy_test_settings
 from gateway.core.types import Decision
 from gateway.providers.base import NormalizedProviderResponse, PreparedProviderRequest
 from gateway.services.agent_registry import agent_registry
@@ -1960,6 +1965,7 @@ async def test_managed_agent_proxy_requires_registered_agent(monkeypatch) -> Non
 
 @pytest.mark.asyncio
 async def test_managed_agent_proxy_sets_agent_context(monkeypatch) -> None:
+    monkeypatch.setattr(_proxy_test_settings, "a2a_interaction_enforcement_enabled", False)
     app = _build_app()
     monkeypatch.setattr(
         agent_registry,
@@ -2272,4 +2278,163 @@ def test_initialize_otel_disabled_keeps_noop_tracer(monkeypatch) -> None:
     assert otel._initialized is True
     assert otel._tracer is not None
 # ===== END tests/test_phase3_otel_hooks.py =====
+
+# ===== BEGIN tests/test_client_blockers.py =====
+"""Tests for the four client-blocker decisions:
+1. Cyren fail-closed
+2. Proxy API key auth
+3. A2A interaction enforcement
+4. Compliance defaults (already configurable)
+"""
+
+from unittest.mock import AsyncMock, Mock, patch
+import pytest
+
+from gateway.services.policy_service import PolicyEngine
+from gateway.integrations.cyren_client import CyrenClient
+from gateway.integrations.audit import AuditLogger
+from gateway.core.config import settings as _settings
+
+
+# --- 1. Cyren fail-closed tests ---
+
+@pytest.mark.asyncio
+async def test_policy_engine_fail_closed_blocks_when_no_threat_data(monkeypatch) -> None:
+    """When Cyren returns no data and fail-closed is True, risk score should be 0 (BLOCK)."""
+    monkeypatch.setattr(_settings, "cyren_fail_closed", True)
+
+    cyren = Mock(spec=CyrenClient)
+    cyren.classify_ip = AsyncMock(return_value=None)
+    cyren.classify_url = AsyncMock(return_value=None)
+    audit = Mock(spec=AuditLogger)
+    audit.log_decision = AsyncMock()
+
+    engine = PolicyEngine(cyren_client=cyren, audit_logger=audit)
+    score = engine._calculate_risk_score(None, None)
+    assert score == 0
+
+
+@pytest.mark.asyncio
+async def test_policy_engine_fail_open_allows_when_no_threat_data(monkeypatch) -> None:
+    """When Cyren returns no data and fail-closed is False, risk score should be 100 (ALLOW)."""
+    monkeypatch.setattr(_settings, "cyren_fail_closed", False)
+
+    engine = PolicyEngine(cyren_client=Mock(), audit_logger=Mock())
+    score = engine._calculate_risk_score(None, None)
+    assert score == 100
+
+
+# --- 2. Proxy API key auth tests ---
+
+def test_proxy_api_key_config_defaults() -> None:
+    """Proxy API key settings should exist in config."""
+    assert hasattr(_settings, "proxy_api_key_enabled")
+    assert hasattr(_settings, "proxy_api_key")
+
+
+# --- 3. A2A interaction enforcement tests ---
+
+@pytest.mark.asyncio
+async def test_a2a_enforcement_rejects_missing_header(monkeypatch) -> None:
+    """Agent proxy should reject request without x-a2a-interaction-id header."""
+    monkeypatch.setattr(_settings, "a2a_interaction_enforcement_enabled", True)
+
+    from gateway.api.public import proxy_agent_chat_completion
+    from gateway.services.agent_registry import agent_registry
+
+    agent_record = {
+        "agent_id": "test-agent",
+        "display_name": "Test Agent",
+        "agent_type": "assistant",
+        "status": "ACTIVE",
+        "wrapped": False,
+        "metadata": {},
+    }
+    monkeypatch.setattr(agent_registry, "get_agent", AsyncMock(return_value=agent_record))
+
+    mock_request = Mock()
+    mock_request.headers = {}
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        await proxy_agent_chat_completion(mock_request, "test-agent")
+    assert exc_info.value.status_code == 400
+    assert "x-a2a-interaction-id" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_a2a_enforcement_rejects_unapproved_interaction(monkeypatch) -> None:
+    """Agent proxy should reject request with a non-APPROVED interaction."""
+    monkeypatch.setattr(_settings, "a2a_interaction_enforcement_enabled", True)
+
+    from gateway.api.public import proxy_agent_chat_completion
+    from gateway.services.agent_registry import agent_registry
+
+    agent_record = {
+        "agent_id": "test-agent",
+        "display_name": "Test Agent",
+        "agent_type": "assistant",
+        "status": "ACTIVE",
+        "wrapped": False,
+        "metadata": {},
+    }
+    monkeypatch.setattr(agent_registry, "get_agent", AsyncMock(return_value=agent_record))
+
+    pending_interaction = {"interaction_id": "int-1", "review_status": "PENDING"}
+    monkeypatch.setattr(agent_registry, "get_interaction", AsyncMock(return_value=pending_interaction))
+
+    mock_request = Mock()
+    mock_request.headers = {"x-a2a-interaction-id": "int-1"}
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        await proxy_agent_chat_completion(mock_request, "test-agent")
+    assert exc_info.value.status_code == 403
+    assert "not APPROVED" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_a2a_enforcement_skipped_when_disabled(monkeypatch) -> None:
+    """When enforcement is disabled, agent proxy should not check interaction header."""
+    monkeypatch.setattr(_settings, "a2a_interaction_enforcement_enabled", False)
+
+    from gateway.api.public import proxy_agent_chat_completion
+    from gateway.services.agent_registry import agent_registry
+
+    agent_record = {
+        "agent_id": "test-agent",
+        "display_name": "Test Agent",
+        "agent_type": "assistant",
+        "status": "ACTIVE",
+        "wrapped": False,
+        "metadata": {},
+    }
+    monkeypatch.setattr(agent_registry, "get_agent", AsyncMock(return_value=agent_record))
+
+    mock_proxy_handler = AsyncMock()
+    mock_proxy_handler.handle_request = AsyncMock(return_value=Mock(status_code=200))
+
+    mock_app = Mock()
+    mock_app.state.proxy_handler = mock_proxy_handler
+
+    mock_request = Mock()
+    mock_request.headers = {}
+    mock_request.app = mock_app
+    mock_request.state = Mock()
+
+    result = await proxy_agent_chat_completion(mock_request, "test-agent")
+    assert result.status_code == 200
+
+
+# --- 4. Compliance defaults ---
+
+def test_compliance_settings_are_configurable() -> None:
+    """Audit retention/redaction settings should be present and configurable."""
+    assert hasattr(_settings, "audit_retention_days")
+    assert hasattr(_settings, "audit_mask_sensitive_fields")
+    assert hasattr(_settings, "audit_redact_message_content")
+    assert hasattr(_settings, "audit_max_string_length")
+    assert hasattr(_settings, "audit_purge_enabled")
+
+# ===== END tests/test_client_blockers.py =====
 

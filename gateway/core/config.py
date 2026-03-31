@@ -102,6 +102,10 @@ class Settings(BaseSettings):
         default=2,
         description="Number of retry attempts for Cyren API"
     )
+    cyren_fail_closed: bool = Field(
+        default=True,
+        description="Block traffic when Cyren is unavailable (fail-closed); false = fail-open",
+    )
     ctas_url: str = Field(
         default="https://try-now-antispam.data443.io/ctasd/ClassifyMessage_Inline",
         description="Cyren CTAS email classification API endpoint",
@@ -269,10 +273,24 @@ class Settings(BaseSettings):
         description="Run legacy CREATE TABLE bootstrap SQL after migrations",
     )
 
+    # Proxy API key authentication
+    proxy_api_key_enabled: bool = Field(
+        default=False,
+        description="Require API key (x-api-key header) for proxy endpoints",
+    )
+    proxy_api_key: str = Field(
+        default="",
+        description="Static API key that proxy callers must provide in x-api-key header",
+    )
+
     # Agent governance hardening
     agent_link_enforcement_enabled: bool = Field(
         default=True,
         description="Require an active A2A link before creating agent interactions",
+    )
+    a2a_interaction_enforcement_enabled: bool = Field(
+        default=True,
+        description="Require an APPROVED a2a_interaction_id header on agent proxy calls",
     )
     agent_interaction_retention_days: int = Field(
         default=30,

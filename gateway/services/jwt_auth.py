@@ -228,3 +228,4 @@ jwt_auth_handler = JWTAuth()
 def get_jwt_auth() -> JWTAuth:
     """Get global JWT auth handler instance."""
     return jwt_auth_handler
+

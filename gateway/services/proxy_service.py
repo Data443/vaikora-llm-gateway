@@ -8,6 +8,7 @@ and forwards to target provider endpoint.
 from __future__ import annotations
 
 from copy import deepcopy
+import hmac
 import json
 import re
 import time
@@ -100,6 +101,39 @@ class ProxyHandler:
         logger.info(
             f"Request {request_id} from {client_ip}: {request.method} {request.url.path}"
         )
+
+        # STEP 0: Proxy API key authentication (if enabled)
+        if settings.proxy_api_key_enabled:
+            expected_key = settings.proxy_api_key.strip()
+            provided_key = request.headers.get("x-api-key", "").strip()
+            if not expected_key:
+                reason = "Proxy API key auth is enabled but PROXY_API_KEY is not configured"
+                await self._emit_gateway_event(
+                    request_id=request_id, decision="ERROR", request=request,
+                    request_body=request_body, model_name=model_name,
+                    provider_name=provider_name, org_id=org_id, user_id=user_id,
+                    response_status=status.HTTP_500_INTERNAL_SERVER_ERROR, reason=reason,
+                    attributes={"block_type": "auth_configuration"},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    message=reason, error_type="auth_configuration_error",
+                    code="proxy_api_key_missing",
+                )
+            if not provided_key or not hmac.compare_digest(provided_key, expected_key):
+                await self._emit_gateway_event(
+                    request_id=request_id, decision="BLOCK", request=request,
+                    request_body=request_body, model_name=model_name,
+                    provider_name=provider_name, org_id=org_id, user_id=user_id,
+                    response_status=status.HTTP_401_UNAUTHORIZED,
+                    reason="Invalid or missing proxy API key",
+                    attributes={"block_type": "proxy_auth"},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    message="Invalid or missing API key",
+                    error_type="auth_required", code="invalid_api_key",
+                )
 
         # STEP 1: JWT Authentication (if enabled)
         jwt_policy = get_policy("jwt_auth")
@@ -960,7 +994,3 @@ def init_proxy_handler(policy_engine: PolicyEngine) -> ProxyHandler:
     global proxy_handler
     proxy_handler = ProxyHandler(policy_engine)
     return proxy_handler
-
-
-
-

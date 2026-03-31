@@ -9,6 +9,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, PlainTextResponse
 from loguru import logger
 
+from gateway.core.config import settings
 from gateway.core.types import Decision
 from gateway.api.auth import require_admin_auth
 from gateway.integrations.audit import audit_logger
@@ -160,6 +161,25 @@ async def proxy_agent_chat_completion(request: Request, agent_id: str) -> Respon
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Agent '{agent_id}' is not active",
         )
+
+    if settings.a2a_interaction_enforcement_enabled:
+        interaction_id = request.headers.get("x-a2a-interaction-id", "").strip()
+        if not interaction_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required header: x-a2a-interaction-id",
+            )
+        interaction = await agent_registry.get_interaction(interaction_id)
+        if not interaction:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"A2A interaction '{interaction_id}' not found",
+            )
+        if str(interaction.get("review_status", "")).upper() != "APPROVED":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"A2A interaction '{interaction_id}' is not APPROVED (status: {interaction.get('review_status')})",
+            )
 
     request.state.agent_context = {
         "agent_id": agent.get("agent_id"),
