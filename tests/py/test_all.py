@@ -69,13 +69,17 @@ def _http(
     admin: bool = False,
     auth: bool = False,
     timeout: int = 30,
+    extra_headers: Optional[Dict[str, str]] = None,
 ) -> Tuple[int, Any, str]:
     url = f"{BASE_URL}{path}"
     body = None
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
 
-    req = request.Request(url=url, method=method, data=body, headers=_headers(admin=admin, auth=auth))
+    h = _headers(admin=admin, auth=auth)
+    if extra_headers:
+        h.update(extra_headers)
+    req = request.Request(url=url, method=method, data=body, headers=h)
 
     try:
         with request.urlopen(req, timeout=timeout) as resp:
@@ -487,11 +491,37 @@ def test_managed_agent_proxy_safe_prompt() -> None:
     if not LLM_API_KEY:
         pytest.skip("LLM_API_KEY/OPENAI_API_KEY not set")
 
+    extra = {}
+    a2a_enabled = _env("A2A_INTERACTION_ENFORCEMENT_ENABLED", "false").lower() == "true"
+    if a2a_enabled:
+        _, interaction_resp, _ = _http(
+            "POST",
+            "/admin/a2a/interactions",
+            {
+                "source_agent_id": "agent-1",
+                "target_agent_id": "agent-2",
+                "payload": {"intent": "proxy-test"},
+                "metadata": {"source": "pytest"},
+                "created_by": "pytest",
+            },
+            admin=True,
+        )
+        iid = interaction_resp.get("interaction", {}).get("interaction_id", "")
+        if iid:
+            _http(
+                "POST",
+                f"/admin/a2a/interactions/{iid}/approve",
+                {"reviewed_by": "pytest", "reason": "test"},
+                admin=True,
+            )
+            extra["x-a2a-interaction-id"] = iid
+
     status, parsed, _ = _http(
         "POST",
         "/agents/agent-1/v1/chat/completions",
         {"model": MODEL, "messages": [{"role": "user", "content": "Say hello from managed agent"}]},
         auth=True,
+        extra_headers=extra,
     )
     _assert_status(status, 200, "managed agent proxy safe prompt")
     assert isinstance(parsed, dict)
