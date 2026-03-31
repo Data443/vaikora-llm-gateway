@@ -1204,7 +1204,8 @@ async def test_lifespan_initializes_and_cleans_up(monkeypatch: pytest.MonkeyPatc
     shutdown_otel = Mock()
 
     policy_engine = object()
-    proxy_handler = object()
+    proxy_handler = AsyncMock()
+    proxy_handler.close = AsyncMock()
     init_policy_engine = Mock(return_value=policy_engine)
     init_proxy_handler = Mock(return_value=proxy_handler)
 
@@ -1262,6 +1263,9 @@ async def test_lifespan_propagates_startup_error(monkeypatch: pytest.MonkeyPatch
 """Observability and governance hardening tests."""
 
 
+from unittest.mock import AsyncMock
+
+import gateway.integrations.audit as audit_mod
 from gateway.core.config import settings
 from gateway.integrations.audit import AuditLogger
 from gateway.integrations.cache import L1Cache
@@ -1308,6 +1312,33 @@ def test_audit_sanitize_payload_can_keep_message_content(monkeypatch) -> None:
 
     assert sanitized["messages"][0]["content"] == "hello world"
     assert sanitized["authorization"] == "***REDACTED***"
+
+
+@pytest.mark.asyncio
+async def test_audit_connect_bootstraps_when_core_schema_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logger = AuditLogger()
+    fake_pool = object()
+    create_pool = AsyncMock(return_value=fake_pool)
+    apply_migrations = AsyncMock()
+    schema_ready = AsyncMock(return_value=False)
+    create_table = AsyncMock()
+
+    monkeypatch.setattr(audit_mod.asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(audit_mod, "apply_migrations", apply_migrations)
+    monkeypatch.setattr(logger, "_core_schema_ready", schema_ready)
+    monkeypatch.setattr(logger, "_create_table", create_table)
+    monkeypatch.setattr(settings, "db_migrations_enabled", True)
+    monkeypatch.setattr(settings, "db_ddl_bootstrap_fallback", False)
+
+    await logger.connect()
+
+    assert logger.connected is True
+    create_pool.assert_awaited_once()
+    apply_migrations.assert_awaited_once_with(fake_pool)
+    schema_ready.assert_awaited_once()
+    create_table.assert_awaited_once()
 
 
 def test_telemetry_records_detector_cache_and_error_counters() -> None:
@@ -1722,8 +1753,8 @@ def test_content_filter_enforces_semantic_policy_when_enabled() -> None:
 def test_policy_store_has_semantic_detection_default() -> None:
     store = PolicyStore()
     semantic = store.get_policy("semantic_detection")
-    assert semantic["enabled"] is False
-    assert semantic["action_on_detect"] == "LOG_ONLY"
+    assert semantic["enabled"] is True
+    assert semantic["action_on_detect"] == "BLOCK"
 # ===== END tests/test_phase2_semantic_detection.py =====
 
 # ===== BEGIN tests/test_phase3_agent_control.py =====
@@ -2011,8 +2042,12 @@ async def test_forward_request_uses_chat_adapter_for_managed_agent_path(monkeypa
             return {"id": "provider-raw"}
 
     class _DummyAsyncClient:
-        def __init__(self, timeout):
-            self.timeout = timeout
+        def __init__(self, **kwargs):
+            pass
+
+        @property
+        def is_closed(self):
+            return False
 
         async def __aenter__(self):
             return self
@@ -2023,6 +2058,9 @@ async def test_forward_request_uses_chat_adapter_for_managed_agent_path(monkeypa
         async def request(self, **kwargs):
             captured_requests.append(kwargs)
             return _UpstreamResponse()
+
+        async def aclose(self):
+            pass
 
     monkeypatch.setattr("gateway.services.proxy_service.AsyncClient", _DummyAsyncClient)
 

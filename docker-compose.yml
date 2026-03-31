@@ -9,9 +9,12 @@ services:
       - "${REDIS_BIND_HOST:-127.0.0.1}:6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: >-
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:-changeme_redis}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme_redis}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -49,8 +52,10 @@ services:
       HOST: "0.0.0.0"
       PORT: 8000
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
       WORKERS: ${WORKERS:-1}
       UPSTREAM_TIMEOUT_SECONDS: ${UPSTREAM_TIMEOUT_SECONDS:-60.0}
+      MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-10485760}
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
 
       # Rate limiting
@@ -73,7 +78,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_DB: 0
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme_redis}
       REDIS_L1_TTL: 300
       REDIS_L2_TTL: 3600
 
@@ -99,6 +104,12 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+
+      # JWT Authentication
+      JWT_ENABLED: ${JWT_ENABLED:-false}
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_ISSUER: ${JWT_ISSUER:-data443-gateway}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-data443-gateway}
 
       # Admin hardening
       ADMIN_AUTH_ENABLED: ${ADMIN_AUTH_ENABLED:-false}

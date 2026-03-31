@@ -18,12 +18,32 @@ from gateway.core.config import settings
 from gateway.integrations.telemetry import telemetry_metrics
 
 
-class L1Cache:
-    """In-memory cache (L1 level)."""
+_L1_MAX_ENTRIES = 10_000
 
-    def __init__(self, ttl: int = 300):
+
+class L1Cache:
+    """In-memory cache (L1 level) with size bound."""
+
+    def __init__(self, ttl: int = 300, max_entries: int = _L1_MAX_ENTRIES):
         self.ttl = ttl
+        self.max_entries = max_entries
         self.cache: dict[str, tuple[float, Any]] = {}
+
+    def _evict_expired(self) -> None:
+        """Remove all expired entries."""
+        now = time.time()
+        expired_keys = [k for k, (exp, _) in self.cache.items() if now >= exp]
+        for k in expired_keys:
+            del self.cache[k]
+
+    def _evict_oldest(self) -> None:
+        """Drop oldest entries when over capacity."""
+        if len(self.cache) <= self.max_entries:
+            return
+        sorted_keys = sorted(self.cache, key=lambda k: self.cache[k][0])
+        to_remove = len(self.cache) - self.max_entries
+        for k in sorted_keys[:to_remove]:
+            del self.cache[k]
 
     def get(self, key: str) -> Optional[Any]:
         """Get value from L1 cache if not expired."""
@@ -34,7 +54,6 @@ class L1Cache:
                 telemetry_metrics.record_cache_event(layer="l1", outcome="hit")
                 return value
             else:
-                # Expired, remove
                 del self.cache[key]
         logger.debug(f"L1 cache MISS: {key}")
         telemetry_metrics.record_cache_event(layer="l1", outcome="miss")
@@ -42,6 +61,10 @@ class L1Cache:
 
     def set(self, key: str, value: Any) -> None:
         """Set value in L1 cache."""
+        if len(self.cache) >= self.max_entries:
+            self._evict_expired()
+        if len(self.cache) >= self.max_entries:
+            self._evict_oldest()
         expiry = time.time() + self.ttl
         self.cache[key] = (expiry, value)
         logger.debug(f"L1 cache SET: {key}")

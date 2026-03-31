@@ -17,9 +17,17 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, description="Gateway port")
     workers: int = Field(default=1, description="Number of worker processes")
     log_level: str = Field(default="INFO", description="Logging level")
+    log_format: str = Field(
+        default="text",
+        description="Logging format: 'text' for human-readable, 'json' for structured JSON",
+    )
     upstream_timeout_seconds: float = Field(
         default=60.0,
         description="Timeout in seconds for upstream LLM provider calls",
+    )
+    max_request_body_bytes: int = Field(
+        default=10_485_760,
+        description="Maximum request body size in bytes (default 10 MB); 0 disables",
     )
 
     rate_limit_enabled: bool = Field(

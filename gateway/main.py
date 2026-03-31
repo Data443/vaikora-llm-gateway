@@ -16,6 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response as StarletteResponse
 
 from gateway.api.admin import get_admin_router
 from gateway.api.agent_control import agent_control_router
@@ -31,6 +33,22 @@ from gateway.policy.store import policy_store
 from gateway.services.agent_registry import agent_registry
 from gateway.services.policy_service import init_policy_engine
 from gateway.services.proxy_service import init_proxy_handler
+
+
+class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
+    """Reject requests whose Content-Length exceeds the configured maximum."""
+
+    async def dispatch(self, request: Request, call_next):
+        max_bytes = settings.max_request_body_bytes
+        if max_bytes and max_bytes > 0:
+            content_length = request.headers.get("content-length")
+            if content_length and int(content_length) > max_bytes:
+                return StarletteResponse(
+                    content='{"error":{"message":"Request body too large","type":"request_too_large","code":"body_limit_exceeded"}}',
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    media_type="application/json",
+                )
+        return await call_next(request)
 
 
 async def _retention_purge_loop(stop_event: asyncio.Event) -> None:
@@ -98,13 +116,15 @@ async def lifespan(app: FastAPI):
         retention_task.cancel()
         with suppress(asyncio.CancelledError):
             await retention_task
+    if proxy_handler is not None:
+        await proxy_handler.close()
     await cache.disconnect()
     await audit_logger.disconnect()
     shutdown_otel()
     logger.info("Shutdown complete")
 
 
-configure_logging(settings.log_level)
+configure_logging(settings.log_level, settings.log_format)
 
 
 def _split_csv(value: str) -> List[str]:
@@ -142,6 +162,7 @@ app.add_middleware(
     allow_headers=cors_headers or ["*"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(RequestBodyLimitMiddleware)
 app.add_middleware(RateLimitMiddleware)
 
 # Include API routers

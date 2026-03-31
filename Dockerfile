@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
 
 # Copy application code
 COPY config/ ./config/
@@ -24,9 +24,17 @@ COPY gateway/ ./gateway/
 # Create __init__.py files for proper Python package structure
 RUN touch gateway/__init__.py config/__init__.py
 
+# Create non-root runtime user for container hardening
+RUN groupadd --system app && useradd --system --gid app --create-home --home-dir /home/app app \
+    && chown -R app:app /app
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 ENV LOG_LEVEL=INFO
+
+# Drop root privileges for runtime
+USER app
 
 # Expose port
 EXPOSE 8000

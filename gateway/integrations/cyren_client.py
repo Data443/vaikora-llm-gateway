@@ -262,17 +262,13 @@ x-ctch-url: {normalized_url}
         return None
 
     def _validate_ip(self, ip: str) -> bool:
-        """Validate IPv4 address."""
-        pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
-        if not re.match(pattern, ip):
+        """Validate IPv4 or IPv6 address."""
+        import ipaddress as _ipaddress
+        try:
+            _ipaddress.ip_address(ip)
+            return True
+        except ValueError:
             return False
-
-        # Check each octet is 0-255
-        for octet in ip.split('.'):
-            if not 0 <= int(octet) <= 255:
-                return False
-
-        return True
 
     def _normalize_url(self, url: str) -> Optional[str]:
         """Normalize URL for Cyren URL Filtering API."""

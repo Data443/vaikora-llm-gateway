@@ -12,7 +12,7 @@ The gateway sits in front of upstream LLM providers and enforces deterministic c
 
 <br/>
 
-![Build](https://img.shields.io/badge/Pytest-81%20Passed-22c55e?style=flat-square&logo=pytest&logoColor=white)
+![Build](https://img.shields.io/badge/Pytest-93%20Passed-22c55e?style=flat-square&logo=pytest&logoColor=white)
 ![Checks](https://img.shields.io/badge/Checks-46%20%2F%2049%20Passed-22c55e?style=flat-square&logo=checkmarx&logoColor=white)
 ![Skipped](https://img.shields.io/badge/Skipped-3%20Optional-f59e0b?style=flat-square)
 ![Status](https://img.shields.io/badge/Status-Operational-38bdf8?style=flat-square&logo=statuspage&logoColor=white)
@@ -24,20 +24,20 @@ The gateway sits in front of upstream LLM providers and enforces deterministic c
 
 ---
 
-## 📋 Current Build Status &nbsp;**
+## ðŸ“‹ Current Build Status &nbsp;**
 
 | Metric | Result |
 |--------|--------|
-| Core gateway implementation | ✅ Complete and operational |
-| Pytest suite | ✅ **81 passed** |
-| Automated verification checks | ✅ **46 passed** / 3 skipped / 0 failed (49 total) |
-| OpenAI proxy flow | ✅ Verified and working |
-| Managed-agent proxy flow | ✅ Verified and working |
-| Optional provider checks | ⚠️ Skipped when API keys not configured (`Anthropic`, `Gemini`, `OpenRouter`) |
+| Core gateway implementation | âœ… Complete and operational |
+| Pytest suite | ✅ **93 passed** |
+| Automated verification checks | âœ… **46 passed** / 3 skipped / 0 failed (49 total) |
+| OpenAI proxy flow | âœ… Verified and working |
+| Managed-agent proxy flow | âœ… Verified and working |
+| Optional provider checks | âš ï¸ Skipped when API keys not configured (`Anthropic`, `Gemini`, `OpenRouter`) |
 
 ---
 
-## 🔍 What This System Does
+## ðŸ” What This System Does
 
 This gateway protects and governs LLM traffic by:
 
@@ -52,7 +52,7 @@ This means clients use one stable API surface, while operations get centralized 
 
 ---
 
-## 🏗 High-Level Architecture
+## ðŸ— High-Level Architecture
 
 ```text
 Client / App
@@ -86,7 +86,7 @@ Supporting stores:
 
 ---
 
-## 🔄 Prompt Lifecycle *(Step-by-Step)*
+## ðŸ”„ Prompt Lifecycle *(Step-by-Step)*
 
 When a user sends a prompt:
 
@@ -95,8 +95,8 @@ When a user sends a prompt:
 | 1 | Request enters gateway endpoint |
 | 2 | Gateway creates `request_id` and extracts context (IP, model, provider hint) |
 | 3 | Optional JWT auth runs if enabled |
-| 4 | Entitlements are enforced — provider enabled? model allowed? input/output limits within policy? |
-| 5 | Content filter evaluates request text — PII, jailbreak/injection, semantic abuse, domain risk, email-risk classification |
+| 4 | Entitlements are enforced â€” provider enabled? model allowed? input/output limits within policy? |
+| 5 | Content filter evaluates request text â€” PII, jailbreak/injection, semantic abuse, domain risk, email-risk classification |
 | 6 | Cyren checks execute (`IPRep` and `URLF`) with cache and circuit breaker |
 | 7 | Policy engine returns decision: `ALLOW`, `ALLOW_LOG`, `CONSTRAIN`, or `BLOCK` |
 | 8 | If blocked, gateway returns `403` with structured error |
@@ -108,16 +108,16 @@ When a user sends a prompt:
 
 ---
 
-## ⚖️ Decision Model
+## âš–ï¸ Decision Model
 
 ### Cyren Score Policy Thresholds
 
 | Score Range | Result |
 |:-----------:|:------:|
-| 80 – 100 | ✅ `ALLOW` |
-| 50 – 79 | 📋 `ALLOW_LOG` |
-| 20 – 49 | ⚠️ `CONSTRAIN` |
-| 0 – 19 | 🚫 `BLOCK` |
+| 80 â€“ 100 | âœ… `ALLOW` |
+| 50 â€“ 79 | ðŸ“‹ `ALLOW_LOG` |
+| 20 â€“ 49 | âš ï¸ `CONSTRAIN` |
+| 0 â€“ 19 | ðŸš« `BLOCK` |
 
 ### Content Policy Behavior
 
@@ -131,7 +131,7 @@ If request/response content matches enabled rules at or above severity threshold
 
 ---
 
-## 🛡 Key Capabilities
+## ðŸ›¡ Key Capabilities
 
 <details open>
 <summary><strong>Security Controls</strong></summary>
@@ -191,7 +191,7 @@ If request/response content matches enabled rules at or above severity threshold
 
 ---
 
-## 🌐 API Surface
+## ðŸŒ API Surface
 
 ### Public Endpoints
 
@@ -218,7 +218,7 @@ If request/response content matches enabled rules at or above severity threshold
 
 ---
 
-## 🚀 Quick Start
+## ðŸš€ Quick Start
 
 ```bash
 git clone https://github.com/joseph88gomez/data443-llm-gateway.git
@@ -230,7 +230,7 @@ curl http://localhost:8000/health
 
 ---
 
-## ⚙️ Configuration Notes
+## âš™ï¸ Configuration Notes
 
 Important environment variables:
 
@@ -247,11 +247,11 @@ Important environment variables:
 
 ---
 
-## 🧪 Testing and Verification
+## ðŸ§ª Testing and Verification
 
 Test layout is documented in [tests/README.md](tests/README.md).
 
-### 1 · Full automated verification *(recommended)*
+### 1 Â· Full automated verification *(recommended)*
 
 ```bash
 bash tests/run_all_tests.sh
@@ -265,7 +265,7 @@ Runs:
 - provider optional checks (if keys set)
 - summary with pass/fail/skip
 
-### 2 · Live interactive LLM testing through gateway
+### 2 Â· Live interactive LLM testing through gateway
 
 ```bash
 LIVE_SHOW_RAW=true bash tests/live_gateway_console.sh
@@ -276,7 +276,7 @@ Runs full verification first, then opens interactive prompt.
 - Shows raw HTTP/JSON output (`LIVE_SHOW_RAW=true`)
 - Can force live prompt even on verification failure with `ALLOW_LIVE_ON_FAIL=true`
 
-### 3 · Pytest only
+### 3 Â· Pytest only
 
 ```bash
 python -m pytest -q tests/py
@@ -284,7 +284,7 @@ python -m pytest -q tests/py
 
 ---
 
-## 📁 Project Structure
+## ðŸ“ Project Structure
 
 ```text
 data443-llm-gateway/
@@ -314,7 +314,7 @@ data443-llm-gateway/
 
 ---
 
-## ✅ Production Baseline Checklist
+## âœ… Production Baseline Checklist
 
 - [ ] Enable admin auth: `ADMIN_AUTH_ENABLED=true` and set `ADMIN_API_KEY`
 - [ ] Enable JWT where required and set strong `JWT_SECRET`
@@ -329,7 +329,7 @@ data443-llm-gateway/
 
 <br/>
 
-**Data443 — All rights reserved.**
+**Data443 â€” All rights reserved.**
 
 <br/>
 

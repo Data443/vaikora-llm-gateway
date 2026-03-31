@@ -16,6 +16,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
+      LOG_FORMAT: ${LOG_FORMAT:-json}
       ADMIN_AUTH_ENABLED: ${ADMIN_AUTH_ENABLED:-true}
       ADMIN_AUTH_MODE: ${ADMIN_AUTH_MODE:-api_key}
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}

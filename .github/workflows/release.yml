@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: "Push image to GHCR"
+        required: true
+        default: true
+        type: boolean
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  security-events: write
+
+jobs:
+  release:
+    runs-on: arc-scale-set
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set Release Variables
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_REPO="$(echo "ghcr.io/${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          SHA_TAG="sha-${GITHUB_SHA}"
+
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+          else
+            RELEASE_TAG="manual-${GITHUB_SHA::7}"
+          fi
+
+          SHOULD_PUSH="false"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            SHOULD_PUSH="true"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.push_image }}" == "true" ]]; then
+            SHOULD_PUSH="true"
+          fi
+
+          echo "image_repo=${IMAGE_REPO}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "should_push=${SHOULD_PUSH}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Fast Unit Tests
+        run: |
+          python -m pytest -q \
+            tests/py/test_admin_auth_hardening.py \
+            tests/py/test_rate_limit_and_semantic.py \
+            tests/py/test_audit_retention_purge.py \
+            tests/py/test_constrain_transform.py
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: steps.vars.outputs.should_push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            -t "${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.release_tag }}" \
+            -t "${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.sha_tag }}" \
+            .
+
+      - name: Scan Image (Trivy)
+        uses: aquasecurity/trivy-action@0.25.0
+        with:
+          image-ref: ${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.release_tag }}
+          format: "table"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH,CRITICAL"
+          exit-code: "1"
+
+      - name: Push Image Tags
+        if: steps.vars.outputs.should_push == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.release_tag }}"
+          docker push "${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.sha_tag }}"
+
+      - name: Install Cosign
+        if: steps.vars.outputs.should_push == 'true'
+        uses: sigstore/cosign-installer@v3.6.0
+
+      - name: Sign Release Image (Keyless)
+        if: steps.vars.outputs.should_push == 'true'
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.release_tag }}"
+          cosign sign --yes "${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.sha_tag }}"

@@ -34,18 +34,18 @@ DEFAULT_POLICIES: Dict[str, Dict[str, Any]] = {
         "action_on_detect": "BLOCK",
     },
     "semantic_detection": {
-        "enabled": False,
-        "action_on_detect": "LOG_ONLY",
-        "severity_threshold": "MEDIUM",
+        "enabled": True,
+        "action_on_detect": "BLOCK",
+        "severity_threshold": "HIGH",
     },
     "domain_risk_scoring": {
-        "enabled": False,
-        "action_on_detect": "LOG_ONLY",
+        "enabled": True,
+        "action_on_detect": "BLOCK",
         "severity_threshold": "MEDIUM",
     },
     "email_classification": {
-        "enabled": False,
-        "action_on_detect": "LOG_ONLY",
+        "enabled": True,
+        "action_on_detect": "BLOCK",
         "severity_threshold": "MEDIUM",
     },
     "jwt_auth": {
@@ -58,9 +58,9 @@ DEFAULT_ENTITLEMENTS: Dict[str, Any] = {
         "pii_detection": True,
         "jailbreak_detection": True,
         "injection_detection": True,
-        "semantic_detection": False,
-        "domain_risk_scoring": False,
-        "email_classification": False,
+        "semantic_detection": True,
+        "domain_risk_scoring": True,
+        "email_classification": True,
     },
     "providers": {
         "openai": True,

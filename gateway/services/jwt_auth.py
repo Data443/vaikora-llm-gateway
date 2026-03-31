@@ -5,16 +5,18 @@ Validates JWT tokens on incoming requests.
 Supports configurable token issuer and secret.
 """
 
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.security.utils import get_authorization_scheme_param
 from loguru import logger
 
-# python-jose is the JWT library
 from jose import jwt, JWTError
 
 from gateway.core.config import settings
+
+_DEFAULT_TOKEN_EXPIRY_HOURS = 1
 
 
 class JWTAuth:
@@ -35,25 +37,21 @@ class JWTAuth:
     def create_token(
         self,
         user_id: str,
-        additional_claims: Optional[dict] = None
-    ) -> str:  # type: ignore
-        """
-        Create a JWT token.
-
-        Args:
-            user_id: User identifier
-            additional_claims: Additional claims to include in token
-
-        Returns:
-            JWT token string
-        """
+        additional_claims: Optional[dict] = None,
+        expires_hours: Optional[int] = None,
+    ) -> str:
+        """Create a JWT token with mandatory expiration."""
         if not self.secret:
             raise ValueError("JWT secret is not configured")
 
+        exp_hours = expires_hours if expires_hours is not None else _DEFAULT_TOKEN_EXPIRY_HOURS
+        now = datetime.now(timezone.utc)
         claims = {
             "sub": user_id,
             "iss": self.issuer,
             "aud": self.audience,
+            "iat": now,
+            "exp": now + timedelta(hours=max(1, exp_hours)),
         }
 
         if additional_claims:
@@ -68,16 +66,8 @@ class JWTAuth:
         logger.info(f"Created token for user: {user_id}")
         return token
 
-    def verify_token(self, token: str) -> Optional[dict]:  # type: ignore
-        """
-        Verify a JWT token.
-
-        Args:
-            token: JWT token string
-
-        Returns:
-            Decoded claims dict, or None if invalid
-        """
+    def verify_token(self, token: str) -> Optional[dict]:
+        """Verify a JWT token including signature, issuer, audience, and expiry."""
         if not self.secret:
             logger.error("JWT verification requested but JWT secret is not configured")
             return None
@@ -88,37 +78,12 @@ class JWTAuth:
                 self.secret,
                 algorithms=[self.algorithm],
                 issuer=self.issuer,
-                audience=self.audience
+                audience=self.audience,
+                options={"require_exp": True, "verify_exp": True},
             )
             return payload
         except JWTError as e:
             logger.warning(f"JWT verification failed: {str(e)}")
-            return None
-
-    def decode_token(self, token: str) -> Optional[dict]:  # type: ignore
-        """
-        Decode JWT token without verification (for debugging).
-
-        Args:
-            token: JWT token string
-
-        Returns:
-            Decoded claims dict, or None if invalid
-        """
-        if not self.secret:
-            logger.error("JWT decode requested but JWT secret is not configured")
-            return None
-
-        try:
-            payload = jwt.decode(
-                token,
-                self.secret,
-                algorithms=[self.algorithm],
-                options={"verify_signature": False}
-            )
-            return payload
-        except JWTError as e:
-            logger.error(f"JWT decode failed: {str(e)}")
             return None
 
 
@@ -263,4 +228,3 @@ jwt_auth_handler = JWTAuth()
 def get_jwt_auth() -> JWTAuth:
     """Get global JWT auth handler instance."""
     return jwt_auth_handler
-

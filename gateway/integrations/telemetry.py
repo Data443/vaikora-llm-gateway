@@ -17,6 +17,19 @@ def _escape_label_value(value: str) -> str:
     )
 
 
+_MAX_DISTINCT_KEYS = 500
+
+
+def _bounded_increment(counter: Dict[str, int], key: str, amount: int = 1) -> None:
+    """Increment counter key, capping distinct key count to prevent memory leak."""
+    if key in counter:
+        counter[key] += amount
+    elif len(counter) < _MAX_DISTINCT_KEYS:
+        counter[key] = amount
+    else:
+        counter["__overflow__"] = counter.get("__overflow__", 0) + amount
+
+
 class TelemetryMetrics:
     """Process-local counters and latency aggregates."""
 
@@ -60,9 +73,9 @@ class TelemetryMetrics:
             attrs = attributes or {}
             block_type = str(attrs.get("block_type") or "unspecified").lower()
             if key == "BLOCK":
-                self._block_type_counts[block_type] += 1
+                _bounded_increment(self._block_type_counts, block_type)
                 if reason:
-                    self._block_reason_counts[str(reason)[:120]] += 1
+                    _bounded_increment(self._block_reason_counts, str(reason)[:120])
 
             if isinstance(response_time_ms, int) and response_time_ms >= 0:
                 self._latency_count += 1
@@ -105,7 +118,7 @@ class TelemetryMetrics:
         """Record normalized gateway error counters."""
         with self._lock:
             key = str(error_type or "unknown").strip().lower()
-            self._error_counts[key] += 1
+            _bounded_increment(self._error_counts, key)
             self._last_updated = datetime.now(timezone.utc)
 
     def record_agent_lifecycle(self, *, event: str, agent_type: Optional[str] = None) -> None:

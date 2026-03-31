@@ -7,13 +7,16 @@ and forwards to target provider endpoint.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
+import re
 import time
 import uuid
 from typing import Optional, Dict, Any
 
 from fastapi import Request, Response, HTTPException, status
-from httpx import AsyncClient, Timeout
+import httpx
+from httpx import AsyncClient, Timeout, Limits
 from loguru import logger
 
 from gateway.core.config import settings
@@ -35,11 +38,33 @@ from gateway.providers.router import ProviderRouter
 class ProxyHandler:
     """Handler for proxying LLM API requests with policy evaluation."""
 
+    _CONSTRAIN_MAX_TOKENS = 256
+    _CONSTRAIN_MAX_TEMPERATURE = 0.2
+    _CONSTRAIN_SYSTEM_PROMPT = (
+        "Gateway constraint mode: provide safe, high-level guidance only. "
+        "Do not provide sensitive details, credentials, secrets, or exploit instructions."
+    )
+
     def __init__(self, policy_engine: PolicyEngine):
         self.policy_engine = policy_engine
         self.llm_endpoint = settings.llm_endpoint.rstrip("/")
         self.timeout = Timeout(settings.upstream_timeout_seconds)
         self.provider_router = ProviderRouter()
+        self._http_client: Optional[AsyncClient] = None
+
+    async def _get_http_client(self) -> AsyncClient:
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = AsyncClient(
+                timeout=self.timeout,
+                limits=Limits(max_connections=100, max_keepalive_connections=20),
+                follow_redirects=False,
+            )
+        return self._http_client
+
+    async def close(self) -> None:
+        if self._http_client and not self._http_client.is_closed:
+            await self._http_client.aclose()
+            self._http_client = None
 
     def _is_chat_completions_path(self, path: str) -> bool:
         """Return True for native and managed-agent chat-completions routes."""
@@ -337,10 +362,16 @@ class ProxyHandler:
 
         try:
             incoming_headers = dict(request.headers)
-            if is_chat_completions and isinstance(request_body, dict):
+            effective_request_body = (
+                self._apply_constraints_to_request(request_body, content_security)
+                if constrained
+                else request_body
+            )
+
+            if is_chat_completions and isinstance(effective_request_body, dict):
                 prepared = self.provider_router.prepare_chat_completion(
                     provider_name=provider_name,
-                    request_body=request_body,
+                    request_body=effective_request_body,
                     incoming_headers=incoming_headers,
                 )
                 target_url = prepared.url
@@ -353,7 +384,7 @@ class ProxyHandler:
                     provider_name=provider_name,
                     incoming_headers=incoming_headers,
                 )
-                outbound_json = request_body
+                outbound_json = effective_request_body
                 outbound_params = {}
 
             with start_span(
@@ -367,14 +398,14 @@ class ProxyHandler:
                     "llm.model": model_name,
                 },
             ) as upstream_span:
-                async with AsyncClient(timeout=self.timeout) as client:
-                    upstream_response = await client.request(
-                        method=request.method,
-                        url=target_url,
-                        params=outbound_params or None,
-                        json=outbound_json,
-                        headers=outbound_headers,
-                    )
+                client = await self._get_http_client()
+                upstream_response = await client.request(
+                    method=request.method,
+                    url=target_url,
+                    params=outbound_params or None,
+                    json=outbound_json,
+                    headers=outbound_headers,
+                )
                 upstream_span.set_attribute("http.status_code", upstream_response.status_code)
 
             response_time_ms = int((time.time() - start_time) * 1000)
@@ -465,6 +496,7 @@ class ProxyHandler:
                 reason=final_decision.reason,
                 attributes={
                     "constrained": constrained,
+                    "constraints_applied": constrained,
                     "request_content_action": str(content_security.get("action", "PASS")),
                     "request_content_counts": content_security.get("counts", {}),
                     "ip_risk_score": final_decision.ip_risk_score,
@@ -546,6 +578,108 @@ class ProxyHandler:
             status_code=status.HTTP_403_FORBIDDEN,
             media_type="application/json",
         )
+
+    def _apply_constraints_to_request(
+        self,
+        request_body: Optional[Dict[str, Any]],
+        content_security: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Apply deterministic request constraints when decision/action is CONSTRAIN.
+
+        Constraint posture:
+        - Clamp token/temperature generation controls
+        - Add explicit safety system prompt for chat payloads
+        - Redact exact detected match strings from text fields
+        """
+        if not isinstance(request_body, dict):
+            return request_body
+
+        constrained = deepcopy(request_body)
+        matches = self._extract_detection_matches(content_security)
+        constrained = self._sanitize_payload_text(constrained, matches)
+
+        # Clamp generation controls to a stricter budget/profile.
+        current_max_tokens = constrained.get("max_tokens")
+        try:
+            parsed_max_tokens = int(current_max_tokens)
+        except (TypeError, ValueError):
+            parsed_max_tokens = self._CONSTRAIN_MAX_TOKENS
+        constrained["max_tokens"] = max(1, min(parsed_max_tokens, self._CONSTRAIN_MAX_TOKENS))
+
+        current_temperature = constrained.get("temperature")
+        try:
+            parsed_temperature = float(current_temperature)
+        except (TypeError, ValueError):
+            parsed_temperature = self._CONSTRAIN_MAX_TEMPERATURE
+        constrained["temperature"] = min(parsed_temperature, self._CONSTRAIN_MAX_TEMPERATURE)
+
+        messages = constrained.get("messages")
+        if isinstance(messages, list):
+            has_constraint_prompt = any(
+                isinstance(item, dict)
+                and str(item.get("role", "")).lower() == "system"
+                and self._CONSTRAIN_SYSTEM_PROMPT in str(item.get("content", ""))
+                for item in messages
+            )
+            if not has_constraint_prompt:
+                constrained["messages"] = [
+                    {
+                        "role": "system",
+                        "content": self._CONSTRAIN_SYSTEM_PROMPT,
+                    },
+                    *messages,
+                ]
+
+        return constrained
+
+    def _extract_detection_matches(self, content_security: Dict[str, Any]) -> list[str]:
+        """Collect textual match values from content-filter detections."""
+        detections = content_security.get("detected", [])
+        if not isinstance(detections, list):
+            return []
+
+        matches: list[str] = []
+        for item in detections:
+            if not isinstance(item, dict):
+                continue
+            match = item.get("match")
+            if isinstance(match, str):
+                normalized = match.strip()
+                if normalized:
+                    matches.append(normalized)
+
+        # Deduplicate while preserving order.
+        seen: set[str] = set()
+        unique: list[str] = []
+        for value in matches:
+            key = value.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(value)
+        return unique
+
+    def _sanitize_payload_text(self, value: Any, matches: list[str]) -> Any:
+        """Recursively redact detected match strings in string payload fields."""
+        if isinstance(value, dict):
+            return {key: self._sanitize_payload_text(item, matches) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._sanitize_payload_text(item, matches) for item in value]
+        if isinstance(value, str):
+            return self._redact_matches(value, matches)
+        return value
+
+    def _redact_matches(self, text: str, matches: list[str]) -> str:
+        """Redact exact detection match values from text using case-insensitive replacement."""
+        sanitized = text
+        # Replace longer matches first to avoid partial overlap issues.
+        for match in sorted(matches, key=len, reverse=True):
+            token = match.strip()
+            if len(token) < 3:
+                continue
+            sanitized = re.sub(re.escape(token), "[REDACTED]", sanitized, flags=re.IGNORECASE)
+        return sanitized
 
     async def _emit_gateway_event(
         self,
@@ -802,12 +936,19 @@ class ProxyHandler:
         return context
 
     async def health_check(self) -> Dict[str, Any]:
-        """Return gateway health status."""
+        """Return gateway health status with component detail."""
+        cb_state = self.policy_engine.cyren_client.get_circuit_breaker_state()
+        cache_ok = cache.l2.connected
+        audit_ok = self.policy_engine.audit_logger.connected
+
+        degraded = cb_state != "closed" or not cache_ok or not audit_ok
         return {
-            "status": "healthy",
-            "circuit_breaker": self.policy_engine.cyren_client.get_circuit_breaker_state(),
-            "cache_connected": cache.l2.connected,
-            "audit_connected": self.policy_engine.audit_logger.connected,
+            "status": "degraded" if degraded else "healthy",
+            "components": {
+                "cyren_circuit_breaker": cb_state,
+                "redis_cache": "connected" if cache_ok else "disconnected",
+                "postgres_audit": "connected" if audit_ok else "disconnected",
+            },
         }
 
 
