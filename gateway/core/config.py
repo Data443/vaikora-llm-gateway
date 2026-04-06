@@ -326,6 +326,44 @@ class Settings(BaseSettings):
         description="Recovery timeout in seconds"
     )
 
+    # Control Plane (Vaikora) Integration
+    control_plane_enabled: bool = Field(
+        default=False,
+        description="Enable integration with a remote Vaikora control plane",
+    )
+    control_plane_url: str = Field(
+        default="",
+        description="Base URL of the Vaikora control plane (e.g. http://localhost:8000)",
+    )
+    control_plane_api_key: str = Field(
+        default="",
+        description="API key for authenticating with the control plane (vk_... or agent key)",
+    )
+    control_plane_policy_sync_interval: int = Field(
+        default=60,
+        description="Seconds between policy sync pulls from the control plane",
+    )
+    control_plane_audit_push_interval: int = Field(
+        default=30,
+        description="Seconds between audit metadata push batches to the control plane",
+    )
+    control_plane_audit_batch_size: int = Field(
+        default=50,
+        description="Max number of audit events per push batch",
+    )
+    control_plane_hitl_poll_interval: int = Field(
+        default=5,
+        description="Seconds between HITL approval status polls",
+    )
+    control_plane_hitl_timeout: int = Field(
+        default=300,
+        description="Max seconds to wait for HITL approval before timing out",
+    )
+    control_plane_request_timeout: float = Field(
+        default=10.0,
+        description="HTTP timeout in seconds for control plane API calls",
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

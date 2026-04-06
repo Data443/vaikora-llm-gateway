@@ -34,6 +34,7 @@ from gateway.api.admin import get_policy
 from gateway.policy.store import policy_store
 from gateway.providers.base import ProviderConfigurationError, extract_text
 from gateway.providers.router import ProviderRouter
+from gateway.integrations.control_plane import control_plane_client
 
 
 class ProxyHandler:
@@ -361,6 +362,19 @@ class ProxyHandler:
                 constrained=True,
             )
 
+        # STEP 5: Control plane HITL policy check
+        hitl_response = await self._check_control_plane_hitl(
+            request=request,
+            request_id=request_id,
+            request_body=request_body,
+            model_name=model_name,
+            provider_name=provider_name,
+            org_id=org_id,
+            user_id=user_id,
+        )
+        if hitl_response is not None:
+            return hitl_response
+
         # ALLOW / ALLOW_LOG
         return await self._forward_request(
             request=request,
@@ -597,6 +611,105 @@ class ProxyHandler:
                 detail="Failed to reach provider endpoint",
             ) from exc
 
+    async def _check_control_plane_hitl(
+        self,
+        request: Request,
+        request_id: str,
+        request_body: Optional[Dict[str, Any]],
+        model_name: Optional[str],
+        provider_name: str,
+        org_id: Optional[str],
+        user_id: Optional[str],
+    ) -> Optional[Response]:
+        """
+        Check synced Vaikora policies for require_approval actions.
+        If a matching HITL policy is found, create an approval request
+        on the control plane and return a 202 response with poll info.
+        Returns None if no HITL policy applies.
+        """
+        if not control_plane_client.is_connected:
+            return None
+
+        hitl_policies = control_plane_client.get_require_approval_policies()
+        if not hitl_policies:
+            return None
+
+        input_text = ""
+        if isinstance(request_body, dict):
+            messages = request_body.get("messages", [])
+            if isinstance(messages, list):
+                input_text = " ".join(
+                    str(m.get("content", ""))
+                    for m in messages
+                    if isinstance(m, dict)
+                ).lower()
+
+        for policy in hitl_policies:
+            rules = policy.get("rules", {})
+            policy_action_type = rules.get("action_type", "")
+
+            # Action type must match (or be wildcard)
+            if policy_action_type and policy_action_type != "*":
+                path = (request.url.path or "").rstrip("/")
+                is_chat = path.endswith("/v1/chat/completions")
+                if policy_action_type == "llm.chat.completion" and not is_chat:
+                    continue
+
+            # Check blocked_keywords if present
+            blocked_keywords = rules.get("blocked_keywords", [])
+            if blocked_keywords:
+                matched = any(kw.lower() in input_text for kw in blocked_keywords)
+                if not matched:
+                    continue
+
+            # This policy requires approval — create HITL request
+            agent_key = request.headers.get("x-agent-id", "")
+            hitl_result = await control_plane_client.create_hitl_request(
+                agent_key=agent_key,
+                action_type="llm.chat.completion",
+                action_details={
+                    "message_preview": input_text[:200] if input_text else "",
+                    "model": model_name,
+                    "provider": provider_name,
+                    "policy_name": policy.get("name", ""),
+                },
+                policy_id=policy.get("id"),
+                risk_score=0.5,
+                proxy_request_id=request_id,
+            )
+
+            if hitl_result:
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="PENDING_APPROVAL",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=202,
+                    reason=f"Requires human approval (policy: {policy.get('name', '')})",
+                    attributes={"block_type": "hitl_approval", "policy_id": policy.get("id")},
+                )
+                return Response(
+                    content=json.dumps({
+                        "status": "pending_approval",
+                        "message": f"Request requires human approval (policy: {policy.get('name', '')})",
+                        "approval_id": hitl_result.get("approval_id"),
+                        "action_log_id": hitl_result.get("action_log_id"),
+                        "poll_url": hitl_result.get("poll_url"),
+                        "expires_at": hitl_result.get("expires_at"),
+                    }),
+                    status_code=202,
+                    media_type="application/json",
+                )
+
+            logger.warning(f"HITL request creation failed for policy {policy.get('name')}")
+            break
+
+        return None
+
     def _block_response(self, decision: PolicyDecision) -> Response:
         """Return block response payload."""
         block_body = {
@@ -764,6 +877,32 @@ class ProxyHandler:
                 extra=merged_attributes,
             ),
         )
+
+        # Audit federation: queue metadata (no content) to the control plane
+        if control_plane_client.is_connected:
+            threats = [
+                d.get("type", "unknown")
+                for d in merged_attributes.get("detected", [])
+                if isinstance(d, dict)
+            ] if isinstance(merged_attributes.get("detected"), list) else []
+
+            control_plane_client.queue_audit_event({
+                "event_id": request_id,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "agent_key": agent_context.get("agent_id", ""),
+                "action_type": request.url.path or "",
+                "decision": decision.lower() if isinstance(decision, str) else str(decision),
+                "risk_score": float(risk_score) if risk_score else 0.0,
+                "threats_detected": threats,
+                "policy_ids_matched": [],
+                "execution_time_ms": response_time_ms or 0,
+                "proxy_instance_id": "data443-gateway",
+                "metadata": {
+                    "provider": provider_name,
+                    "model": model_name,
+                    "response_status": response_status,
+                },
+            })
 
     def _json_error_response(
         self,

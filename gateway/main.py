@@ -33,6 +33,7 @@ from gateway.policy.store import policy_store
 from gateway.services.agent_registry import agent_registry
 from gateway.services.policy_service import init_policy_engine
 from gateway.services.proxy_service import init_proxy_handler
+from gateway.integrations.control_plane import control_plane_client
 
 
 class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
@@ -102,6 +103,9 @@ async def lifespan(app: FastAPI):
     # Store in app state
     app.state.proxy_handler = proxy_handler
 
+    # Start control plane integration (policy sync, audit federation, HITL)
+    await control_plane_client.start()
+
     logger.info("Data443 LLM Gateway started successfully")
 
     yield
@@ -116,6 +120,7 @@ async def lifespan(app: FastAPI):
         retention_task.cancel()
         with suppress(asyncio.CancelledError):
             await retention_task
+    await control_plane_client.stop()
     if proxy_handler is not None:
         await proxy_handler.close()
     await cache.disconnect()
@@ -201,5 +206,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
