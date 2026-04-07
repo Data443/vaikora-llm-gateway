@@ -104,6 +104,8 @@ async def lifespan(app: FastAPI):
     app.state.proxy_handler = proxy_handler
 
     # Start control plane integration (policy sync, audit federation, HITL)
+    if audit_logger.pool:
+        control_plane_client.set_db_pool(audit_logger.pool)
     await control_plane_client.start()
 
     logger.info("Data443 LLM Gateway started successfully")

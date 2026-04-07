@@ -663,15 +663,20 @@ class ProxyHandler:
                     continue
 
             # This policy requires approval — create HITL request
+            # Only send metadata, never message content
+            matched_keywords = [
+                kw for kw in blocked_keywords if kw.lower() in input_text
+            ] if blocked_keywords else []
             agent_key = request.headers.get("x-agent-id", "")
             hitl_result = await control_plane_client.create_hitl_request(
                 agent_key=agent_key,
                 action_type="llm.chat.completion",
                 action_details={
-                    "message_preview": input_text[:200] if input_text else "",
                     "model": model_name,
                     "provider": provider_name,
                     "policy_name": policy.get("name", ""),
+                    "matched_keywords": matched_keywords,
+                    "message_length": len(input_text),
                 },
                 policy_id=policy.get("id"),
                 risk_score=0.5,

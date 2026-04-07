@@ -10,6 +10,7 @@ All HTTP calls use the X-Proxy-Api-Key header for authentication.
 """
 
 import asyncio
+import json
 import time
 from collections import deque
 from typing import Any, Dict, List, Optional
@@ -47,7 +48,14 @@ class ControlPlaneClient:
         self._policy_sync_task: Optional[asyncio.Task] = None
         self._audit_push_task: Optional[asyncio.Task] = None
 
+        # Local DB pool for persistent policy cache (set externally)
+        self._db_pool = None
+
         self._started = False
+
+    def set_db_pool(self, pool) -> None:
+        """Inject the gateway's asyncpg pool for persistent caching."""
+        self._db_pool = pool
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -89,10 +97,12 @@ class ControlPlaneClient:
                 await asyncio.sleep(wait)
 
         if not self._policies:
-            logger.warning(
-                "Starting with empty policy cache — proxy will use "
-                "local-only policies until the next successful sync"
-            )
+            loaded = await self._load_policies_from_db()
+            if not loaded:
+                logger.warning(
+                    "Starting with empty policy cache — proxy will use "
+                    "local-only policies until the next successful sync"
+                )
 
         self._policy_sync_task = asyncio.create_task(
             self._policy_sync_loop(), name="control_plane_policy_sync"
@@ -145,6 +155,57 @@ class ControlPlaneClient:
             if p.get("action") == "require_approval"
         ]
 
+    async def _save_policies_to_db(self) -> None:
+        """Persist the current policy cache to local PostgreSQL."""
+        if not self._db_pool or not self._policies:
+            return
+        try:
+            async with self._db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO control_plane_policy_cache
+                        (organization_id, policies, synced_at, source_url)
+                    VALUES ($1, $2, NOW(), $3)
+                    """,
+                    "",
+                    json.dumps(self._policies),
+                    self._base_url,
+                )
+            logger.debug(
+                f"Saved {len(self._policies)} policies to local cache"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to save policies to local DB: {e}")
+
+    async def _load_policies_from_db(self) -> bool:
+        """
+        Load policies from local PostgreSQL cache.
+        Returns True if policies were loaded, False otherwise.
+        """
+        if not self._db_pool:
+            return False
+        try:
+            async with self._db_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT policies, synced_at
+                    FROM control_plane_policy_cache
+                    ORDER BY synced_at DESC
+                    LIMIT 1
+                    """
+                )
+            if row and row["policies"]:
+                self._policies = json.loads(row["policies"])
+                self._policies_synced_at = row["synced_at"].timestamp()
+                logger.info(
+                    f"Loaded {len(self._policies)} policies from local cache "
+                    f"(synced at {row['synced_at'].isoformat()})"
+                )
+                return True
+        except Exception as e:
+            logger.warning(f"Failed to load policies from local DB: {e}")
+        return False
+
     async def _sync_policies_once(self) -> None:
         """Pull policies from the control plane and update local cache."""
         try:
@@ -160,6 +221,8 @@ class ControlPlaneClient:
             logger.info(
                 f"Policy sync complete — {len(self._policies)} policies loaded"
             )
+
+            await self._save_policies_to_db()
         except httpx.HTTPStatusError as e:
             logger.warning(f"Policy sync HTTP error: {e.response.status_code}")
         except Exception as e:

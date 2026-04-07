@@ -6,7 +6,7 @@ services:
     image: redis:7-alpine
     container_name: data443-gateway-redis
     ports:
-      - "${REDIS_BIND_HOST:-127.0.0.1}:6379:6379"
+      - "${REDIS_BIND_HOST:-127.0.0.1}:6380:6379"
     volumes:
       - redis_data:/data
     command: >-
@@ -25,7 +25,7 @@ services:
     image: postgres:15-alpine
     container_name: data443-gateway-postgres
     ports:
-      - "${POSTGRES_BIND_HOST:-127.0.0.1}:5432:5432"
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:5433:5432"
     environment:
       POSTGRES_DB: data443_audit
       POSTGRES_USER: postgres
@@ -46,7 +46,7 @@ services:
       dockerfile: Dockerfile
     container_name: data443-gateway
     ports:
-      - "8000:8000"
+      - "9000:8000"
     environment:
       # Server
       HOST: "0.0.0.0"
@@ -135,6 +135,17 @@ services:
       # Circuit breaker
       CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5
       CIRCUIT_BREAKER_RECOVERY_TIMEOUT: 60
+
+      # Control Plane (Vaikora integration)
+      CONTROL_PLANE_ENABLED: ${CONTROL_PLANE_ENABLED:-false}
+      CONTROL_PLANE_URL: ${CONTROL_PLANE_URL:-http://vaikora-backend:8000}
+      CONTROL_PLANE_API_KEY: ${CONTROL_PLANE_API_KEY:-}
+      CONTROL_PLANE_POLICY_SYNC_INTERVAL: ${CONTROL_PLANE_POLICY_SYNC_INTERVAL:-60}
+      CONTROL_PLANE_AUDIT_PUSH_INTERVAL: ${CONTROL_PLANE_AUDIT_PUSH_INTERVAL:-30}
+      CONTROL_PLANE_AUDIT_BATCH_SIZE: ${CONTROL_PLANE_AUDIT_BATCH_SIZE:-50}
+      CONTROL_PLANE_HITL_POLL_INTERVAL: ${CONTROL_PLANE_HITL_POLL_INTERVAL:-5}
+      CONTROL_PLANE_HITL_TIMEOUT: ${CONTROL_PLANE_HITL_TIMEOUT:-300}
+      CONTROL_PLANE_REQUEST_TIMEOUT: ${CONTROL_PLANE_REQUEST_TIMEOUT:-10.0}
     depends_on:
       redis:
         condition: service_healthy
@@ -146,8 +157,17 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - default
+      - vaikora-network
     restart: unless-stopped
 
 volumes:
   redis_data:
   postgres_data:
+
+networks:
+  default:
+  vaikora-network:
+    external: true
+    name: vaikora-main_vaikora-network
