@@ -292,7 +292,7 @@ class AuditLogger:
                         result = await conn.execute(
                             """
                             DELETE FROM audit_log
-                            WHERE timestamp < NOW() - (($1::text || ' days')::interval)
+                            WHERE timestamp < NOW() - make_interval(days => $1::int)
                             """,
                             retention_days,
                         )
@@ -301,7 +301,7 @@ class AuditLogger:
                         result = await conn.execute(
                             """
                             DELETE FROM llm_gateway_events
-                            WHERE timestamp < NOW() - (($1::text || ' days')::interval)
+                            WHERE timestamp < NOW() - make_interval(days => $1::int)
                             """,
                             retention_days,
                         )
@@ -310,7 +310,7 @@ class AuditLogger:
                         result = await conn.execute(
                             """
                             DELETE FROM interaction_reviews
-                            WHERE reviewed_at < NOW() - (($1::text || ' days')::interval)
+                            WHERE reviewed_at < NOW() - make_interval(days => $1::int)
                             """,
                             retention_days,
                         )
@@ -320,7 +320,7 @@ class AuditLogger:
                         result = await conn.execute(
                             """
                             DELETE FROM agent_interactions
-                            WHERE created_at < NOW() - (($1::text || ' days')::interval)
+                            WHERE created_at < NOW() - make_interval(days => $1::int)
                             """,
                             interaction_retention_days,
                         )
@@ -1322,4 +1322,3 @@ class AuditLogger:
 
 # Global audit logger instance
 audit_logger = AuditLogger()
-

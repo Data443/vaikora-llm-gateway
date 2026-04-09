@@ -351,6 +351,10 @@ class Settings(BaseSettings):
         default=50,
         description="Max number of audit events per push batch",
     )
+    control_plane_audit_buffer_size: int = Field(
+        default=5000,
+        description="Max number of outbound audit events buffered locally before drops",
+    )
     control_plane_hitl_poll_interval: int = Field(
         default=5,
         description="Seconds between HITL approval status polls",
@@ -362,6 +366,22 @@ class Settings(BaseSettings):
     control_plane_request_timeout: float = Field(
         default=10.0,
         description="HTTP timeout in seconds for control plane API calls",
+    )
+    control_plane_startup_sync_retries: int = Field(
+        default=3,
+        description="Number of startup retries for initial control-plane policy sync",
+    )
+    control_plane_policy_stale_after_seconds: int = Field(
+        default=300,
+        description="Mark policy cache stale after this many seconds without a successful sync; 0 disables",
+    )
+    control_plane_circuit_breaker_failure_threshold: int = Field(
+        default=5,
+        description="Consecutive control-plane request failures before the circuit opens",
+    )
+    control_plane_circuit_breaker_recovery_timeout: int = Field(
+        default=60,
+        description="Seconds to wait before retrying control-plane calls after the circuit opens",
     )
 
     model_config = SettingsConfigDict(

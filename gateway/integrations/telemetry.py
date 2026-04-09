@@ -42,6 +42,7 @@ class TelemetryMetrics:
         self._detector_counts: Dict[str, int] = defaultdict(int)
         self._cache_counts: Dict[str, int] = defaultdict(int)
         self._error_counts: Dict[str, int] = defaultdict(int)
+        self._control_plane_counts: Dict[str, int] = defaultdict(int)
         self._agent_lifecycle_counts: Dict[str, int] = defaultdict(int)
         self._a2a_interaction_counts: Dict[str, int] = defaultdict(int)
         self._a2a_review_counts: Dict[str, int] = defaultdict(int)
@@ -121,6 +122,14 @@ class TelemetryMetrics:
             _bounded_increment(self._error_counts, key)
             self._last_updated = datetime.now(timezone.utc)
 
+    def record_control_plane_event(self, *, operation: str, outcome: str) -> None:
+        """Record control-plane lifecycle outcomes for sync/audit/HITL visibility."""
+        with self._lock:
+            operation_key = str(operation or "unknown").strip().lower()
+            outcome_key = str(outcome or "unknown").strip().lower()
+            _bounded_increment(self._control_plane_counts, f"{operation_key}|{outcome_key}")
+            self._last_updated = datetime.now(timezone.utc)
+
     def record_agent_lifecycle(self, *, event: str, agent_type: Optional[str] = None) -> None:
         """Record managed-agent lifecycle operations."""
         with self._lock:
@@ -160,6 +169,7 @@ class TelemetryMetrics:
                 "detector_hit_counts": dict(self._detector_counts),
                 "cache_counts": dict(self._cache_counts),
                 "error_counts": dict(self._error_counts),
+                "control_plane_counts": dict(self._control_plane_counts),
                 "agent_lifecycle_counts": dict(self._agent_lifecycle_counts),
                 "a2a_interaction_counts": dict(self._a2a_interaction_counts),
                 "a2a_review_counts": dict(self._a2a_review_counts),
@@ -255,6 +265,20 @@ class TelemetryMetrics:
 
         lines.extend(
             [
+                "# HELP gateway_control_plane_total Control-plane lifecycle outcomes by operation and outcome",
+                "# TYPE gateway_control_plane_total counter",
+            ]
+        )
+        for composite, count in sorted(snap.get("control_plane_counts", {}).items()):
+            operation, _, outcome = composite.partition("|")
+            operation_label = _escape_label_value(operation or "unknown")
+            outcome_label = _escape_label_value(outcome or "unknown")
+            lines.append(
+                f'gateway_control_plane_total{{operation="{operation_label}",outcome="{outcome_label}"}} {count}'
+            )
+
+        lines.extend(
+            [
                 "# HELP gateway_agent_lifecycle_total Managed-agent lifecycle operations",
                 "# TYPE gateway_agent_lifecycle_total counter",
             ]
@@ -332,6 +356,7 @@ class TelemetryMetrics:
             self._detector_counts.clear()
             self._cache_counts.clear()
             self._error_counts.clear()
+            self._control_plane_counts.clear()
             self._agent_lifecycle_counts.clear()
             self._a2a_interaction_counts.clear()
             self._a2a_review_counts.clear()
