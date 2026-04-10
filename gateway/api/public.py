@@ -31,6 +31,22 @@ async def health_check(request: Request) -> Dict[str, Any]:
     return await proxy_handler.health_check()
 
 
+@public_router.get("/ready")
+async def readiness_check(request: Request) -> JSONResponse:
+    """
+    Readiness probe endpoint.
+
+    Returns HTTP 200 only when the gateway is ready to serve traffic.
+    Returns HTTP 503 with component details when dependencies are degraded.
+    """
+    proxy_handler = request.app.state.proxy_handler
+    payload = await proxy_handler.readiness_check()
+    return JSONResponse(
+        status_code=status.HTTP_200_OK if payload.get("ready") else status.HTTP_503_SERVICE_UNAVAILABLE,
+        content=jsonable_encoder(payload),
+    )
+
+
 @public_router.get("/")
 async def root() -> Dict[str, Any]:
     """Root endpoint with gateway information."""
@@ -40,6 +56,7 @@ async def root() -> Dict[str, Any]:
         "status": "operational",
         "endpoints": {
             "health": "/health",
+            "ready": "/ready",
             "proxy": "/{path}",
             "agent_proxy": "/agents/{agent_id}/v1/chat/completions",
             "audit": "/audit/log",

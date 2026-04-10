@@ -56,6 +56,8 @@ spec:
               value: {{ .Values.gateway.maxRequestBodyBytes | quote }}
             - name: TRUST_PROXY_HEADERS
               value: {{ .Values.gateway.trustProxyHeaders | quote }}
+            - name: STRICT_STARTUP_VALIDATION
+              value: {{ .Values.gateway.strictStartupValidation | quote }}
 
             # ---- Rate Limiting ----
             - name: RATE_LIMIT_ENABLED

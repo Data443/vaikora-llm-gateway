@@ -1139,30 +1139,63 @@ class ProxyHandler:
 
         return context
 
-    async def health_check(self) -> Dict[str, Any]:
-        """Return gateway health status with component detail."""
+    def _component_health_snapshot(self) -> Dict[str, Any]:
+        """Collect component-level operational status used by health and readiness endpoints."""
         cb_state = self.policy_engine.cyren_client.get_circuit_breaker_state()
         cache_ok = cache.l2.connected
         audit_ok = self.policy_engine.audit_logger.connected
         control_plane_health = control_plane_client.health_snapshot()
-
-        degraded = (
-            cb_state != "closed"
-            or not cache_ok
-            or not audit_ok
-            or (
-                settings.control_plane_enabled
-                and control_plane_health.get("status") != "healthy"
-            )
+        control_plane_required = settings.control_plane_enabled
+        control_plane_ok = (not control_plane_required) or (
+            control_plane_health.get("status") == "healthy"
         )
+
+        return {
+            "cyren_circuit_breaker": cb_state,
+            "redis_cache": "connected" if cache_ok else "disconnected",
+            "postgres_audit": "connected" if audit_ok else "disconnected",
+            "control_plane": control_plane_health,
+            "readiness_flags": {
+                "cyren_ok": cb_state == "closed",
+                "redis_ok": cache_ok,
+                "audit_ok": audit_ok,
+                "control_plane_required": control_plane_required,
+                "control_plane_ok": control_plane_ok,
+            },
+        }
+
+    async def health_check(self) -> Dict[str, Any]:
+        """Return gateway health status with component detail."""
+        components = self._component_health_snapshot()
+        flags = components["readiness_flags"]
+        degraded = not (
+            flags["cyren_ok"]
+            and flags["redis_ok"]
+            and flags["audit_ok"]
+            and flags["control_plane_ok"]
+        )
+
+        components.pop("readiness_flags", None)
         return {
             "status": "degraded" if degraded else "healthy",
-            "components": {
-                "cyren_circuit_breaker": cb_state,
-                "redis_cache": "connected" if cache_ok else "disconnected",
-                "postgres_audit": "connected" if audit_ok else "disconnected",
-                "control_plane": control_plane_health,
-            },
+            "components": components,
+        }
+
+    async def readiness_check(self) -> Dict[str, Any]:
+        """Return strict readiness state for Kubernetes readiness probes."""
+        components = self._component_health_snapshot()
+        flags = components["readiness_flags"]
+        ready = (
+            flags["cyren_ok"]
+            and flags["redis_ok"]
+            and flags["audit_ok"]
+            and flags["control_plane_ok"]
+        )
+        components.pop("readiness_flags", None)
+        return {
+            "ready": ready,
+            "status": "ready" if ready else "not_ready",
+            "components": components,
         }
 
 

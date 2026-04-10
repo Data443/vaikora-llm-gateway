@@ -68,7 +68,27 @@ jobs:
             tests/py/test_admin_auth_hardening.py \
             tests/py/test_rate_limit_and_semantic.py \
             tests/py/test_audit_retention_purge.py \
-            tests/py/test_constrain_transform.py
+            tests/py/test_constrain_transform.py \
+            tests/py/test_startup_validation_and_readiness.py
+
+      - name: Install Helm
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v helm >/dev/null 2>&1; then
+            helm version
+            exit 0
+          fi
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Helm Lint and Template Validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm lint ./helm/data443-gateway
+          helm template data443-gw ./helm/data443-gateway > /tmp/data443-gateway-rendered.yaml
+          test -s /tmp/data443-gateway-rendered.yaml
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

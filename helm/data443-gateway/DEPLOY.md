@@ -17,7 +17,8 @@ helm repo update
 helm install data443-gw ./helm/data443-gateway \
   --set postgresql.auth.password=<STRONG_PG_PASSWORD> \
   --set redis.auth.password=<STRONG_REDIS_PASSWORD> \
-  --set gateway.proxyApiKey=<PROXY_API_KEY>
+  --set gateway.proxyApiKey=<PROXY_API_KEY> \
+  --set gateway.admin.apiKey=<ADMIN_API_KEY>
 ```
 
 ## Required Values
@@ -27,6 +28,7 @@ helm install data443-gw ./helm/data443-gateway \
 | `postgresql.auth.password` | PostgreSQL password for the audit database | `my-pg-secret-123` |
 | `redis.auth.password` | Redis password for caching layer | `my-redis-secret-456` |
 | `gateway.proxyApiKey` | API key callers must send via `x-api-key` header | `gw_abc123...` |
+| `gateway.admin.apiKey` | Admin API key for `/admin/*` and audit/metrics endpoints when admin auth is enabled | `adm_abc123...` |
 
 ## Vaikora Control Plane Integration
 
@@ -90,6 +92,7 @@ helm install data443-gw ./helm/data443-gateway \
 | `gateway.workers` | `2` | Uvicorn worker processes |
 | `gateway.upstreamTimeoutSeconds` | `60` | Timeout for upstream LLM calls |
 | `gateway.trustProxyHeaders` | `true` | Trust X-Forwarded-For headers |
+| `gateway.strictStartupValidation` | `true` | Fail fast on insecure/invalid startup config |
 
 ### Authentication
 
@@ -165,9 +168,13 @@ helm install data443-gw ./helm/data443-gateway \
 | `autoscaling.maxReplicas` | `5` | Maximum replicas |
 | `autoscaling.targetCPUUtilizationPercentage` | `70` | CPU target for scaling |
 
-## Health Check
+## Health and Readiness
 
-The gateway exposes `GET /health` which returns:
+The gateway exposes:
+- `GET /health`: component-level liveness/diagnostics
+- `GET /ready`: strict readiness probe for Kubernetes rollouts
+
+`GET /health` returns:
 
 ```json
 {
@@ -180,4 +187,6 @@ The gateway exposes `GET /health` which returns:
 }
 ```
 
-Both liveness and readiness probes use this endpoint.
+The chart is configured to use:
+- liveness probe: `/health`
+- readiness probe: `/ready`

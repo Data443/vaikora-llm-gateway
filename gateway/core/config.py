@@ -29,6 +29,13 @@ class Settings(BaseSettings):
         default=10_485_760,
         description="Maximum request body size in bytes (default 10 MB); 0 disables",
     )
+    strict_startup_validation: bool = Field(
+        default=False,
+        description=(
+            "Enable strict fail-fast startup validation for production "
+            "(placeholder credentials and incomplete auth config are rejected)"
+        ),
+    )
 
     rate_limit_enabled: bool = Field(
         default=False,

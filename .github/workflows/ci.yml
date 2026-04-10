@@ -9,7 +9,7 @@ on:
 
 jobs:
   test-and-build:
-    runs-on: arc-scale-set
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -105,6 +105,7 @@ jobs:
           fi
 
           curl -fsS http://localhost:8000/health
+          curl -fsS http://localhost:8000/ready
 
       - name: Run unit tests
         run: |
@@ -117,6 +118,23 @@ jobs:
       - name: Build Docker image
         run: |
           docker build -t data443-llm-gateway:ci .
+
+      - name: Install Helm
+        run: |
+          set -euxo pipefail
+          if command -v helm >/dev/null 2>&1; then
+            helm version
+            exit 0
+          fi
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Helm lint and template checks
+        run: |
+          set -euxo pipefail
+          helm lint ./helm/data443-gateway
+          helm template data443-gw ./helm/data443-gateway > /tmp/data443-gateway-rendered.yaml
+          test -s /tmp/data443-gateway-rendered.yaml
 
       - name: Teardown gateway stack
         if: always()

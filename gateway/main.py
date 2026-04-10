@@ -24,6 +24,7 @@ from gateway.api.agent_control import agent_control_router
 from gateway.api.public import public_router
 from gateway.core.config import settings
 from gateway.core.logging import configure_logging
+from gateway.core.startup_validation import validate_startup_settings
 from gateway.integrations.audit import audit_logger
 from gateway.integrations.cache import cache
 from gateway.integrations.cyren_client import cyren_client
@@ -71,6 +72,7 @@ async def _retention_purge_loop(stop_event: asyncio.Event) -> None:
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     logger.info("Starting Data443 LLM Gateway...")
+    validate_startup_settings(strict=settings.strict_startup_validation)
 
     # Initialize OpenTelemetry hooks (optional)
     initialize_otel()

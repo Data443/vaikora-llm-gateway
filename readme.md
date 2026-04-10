@@ -234,6 +234,7 @@ All enabled by default with BLOCK action:
 |--------|------|-------------|
 | `GET` | `/` | Root |
 | `GET` | `/health` | Health check (per-component status) |
+| `GET` | `/ready` | Readiness probe (HTTP 200 when ready, HTTP 503 when degraded) |
 | `GET` | `/audit/log` | Audit log query |
 | `GET` | `/audit/events` | Gateway event stream |
 | `GET` | `/audit/metrics` | JSON metrics snapshot |
@@ -272,7 +273,7 @@ Important environment variables:
 
 | Category | Variables |
 |----------|-----------|
-| Server | `HOST`, `PORT`, `WORKERS`, `LOG_LEVEL`, `LOG_FORMAT`, `MAX_REQUEST_BODY_BYTES` |
+| Server | `HOST`, `PORT`, `WORKERS`, `LOG_LEVEL`, `LOG_FORMAT`, `MAX_REQUEST_BODY_BYTES`, `STRICT_STARTUP_VALIDATION` |
 | Rate Limiting | `RATE_LIMIT_ENABLED`, `RATE_LIMIT_STORAGE`, `RATE_LIMIT_PROXY_REQUESTS` |
 | Provider | `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_API_KEY` |
 | Provider Keys | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` |
@@ -285,6 +286,9 @@ Important environment variables:
 | Proxy Auth | `PROXY_API_KEY_ENABLED`, `PROXY_API_KEY` |
 | Agent Governance | `AGENT_LINK_ENFORCEMENT_ENABLED`, `A2A_INTERACTION_ENFORCEMENT_ENABLED`, `AGENT_INTERACTION_RETENTION_DAYS` |
 | Telemetry | `OTEL_ENABLED`, `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_ENDPOINT` |
+
+Production recommendation:
+- Set `STRICT_STARTUP_VALIDATION=true` so the gateway fails fast on insecure/invalid startup config.
 
 ---
 
