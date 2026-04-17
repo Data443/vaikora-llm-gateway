@@ -7,6 +7,7 @@
 #   - gateway.proxyApiKey
 #   - gateway.controlPlane.apiKey   (if control plane is enabled)
 #   - gateway.controlPlane.url      (if control plane is enabled)
+#   - gateway.controlPlane.hitlContinuationSecret (if control plane is enabled)
 # -----------------------------------------------------------------
 
 # -- Number of gateway replicas
@@ -121,6 +122,9 @@ gateway:
     auditBatchSize: 50
     hitlPollIntervalSeconds: 5
     hitlTimeoutSeconds: 300
+    # REQUIRED in production — HMAC secret for async HITL continuation tokens
+    hitlContinuationSecret: ""
+    hitlContinuationTtlSeconds: 3600
     requestTimeoutSeconds: 10
 
   # OpenTelemetry (optional)

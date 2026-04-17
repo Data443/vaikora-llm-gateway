@@ -213,6 +213,13 @@ spec:
               value: {{ .Values.gateway.controlPlane.hitlPollIntervalSeconds | quote }}
             - name: CONTROL_PLANE_HITL_TIMEOUT
               value: {{ .Values.gateway.controlPlane.hitlTimeoutSeconds | quote }}
+            - name: CONTROL_PLANE_HITL_CONTINUATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "data443-gateway.fullname" . }}
+                  key: CONTROL_PLANE_HITL_CONTINUATION_SECRET
+            - name: CONTROL_PLANE_HITL_CONTINUATION_TTL_SECONDS
+              value: {{ .Values.gateway.controlPlane.hitlContinuationTtlSeconds | quote }}
             - name: CONTROL_PLANE_REQUEST_TIMEOUT
               value: {{ .Values.gateway.controlPlane.requestTimeoutSeconds | quote }}
             {{- end }}

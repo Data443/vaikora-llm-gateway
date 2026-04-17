@@ -8,6 +8,8 @@ and forwards to target provider endpoint.
 from __future__ import annotations
 
 from copy import deepcopy
+import base64
+import hashlib
 import hmac
 import json
 import re
@@ -39,6 +41,8 @@ from gateway.integrations.control_plane import control_plane_client
 
 class ProxyHandler:
     """Handler for proxying LLM API requests with policy evaluation."""
+
+    _HITL_CONTINUATION_HEADER = "x-data443-hitl-continuation"
 
     _CONSTRAIN_MAX_TOKENS = 256
     _CONSTRAIN_MAX_TEMPERATURE = 0.2
@@ -611,6 +615,153 @@ class ProxyHandler:
                 detail="Failed to reach provider endpoint",
             ) from exc
 
+    def _hitl_continuation_secret_bytes(self) -> Optional[bytes]:
+        secret = (settings.control_plane_hitl_continuation_secret or "").strip()
+        if not secret:
+            return None
+        return secret.encode("utf-8")
+
+    @staticmethod
+    def _canonical_request_path(request: Request) -> str:
+        return (request.url.path or "").rstrip("/")
+
+    @staticmethod
+    def _stable_json_bytes(payload: Dict[str, Any]) -> bytes:
+        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    def _hitl_body_hash(self, request_body: Optional[Dict[str, Any]]) -> str:
+        if not isinstance(request_body, dict):
+            return hashlib.sha256(b"").hexdigest()
+        return hashlib.sha256(self._stable_json_bytes(request_body)).hexdigest()
+
+    def _matched_blocked_keywords(
+        self,
+        *,
+        blocked_keywords: list,
+        input_text: str,
+    ) -> list[str]:
+        if not blocked_keywords:
+            return []
+        lowered = input_text.lower()
+        matched: list[str] = []
+        for kw in blocked_keywords:
+            if isinstance(kw, str) and kw.lower() in lowered:
+                matched.append(kw)
+        return matched
+
+    def _sign_hitl_continuation_token(self, signing_input: str) -> str:
+        secret = self._hitl_continuation_secret_bytes()
+        if secret is None:
+            raise RuntimeError("HITL continuation secret is not configured")
+        mac = hmac.new(secret, signing_input.encode("utf-8"), hashlib.sha256).digest()
+        return base64.urlsafe_b64encode(mac).decode("ascii").rstrip("=")
+
+    def _build_hitl_continuation_token(
+        self,
+        *,
+        action_log_id: str,
+        proxy_request_id: str,
+        request_path: str,
+        body_hash: str,
+        policy_id: Optional[str],
+        matched_keywords: list[str],
+    ) -> str:
+        now = int(time.time())
+        ttl = max(1, int(settings.control_plane_hitl_continuation_ttl_seconds))
+        exp = now + ttl
+        policy_id_value = policy_id or ""
+        keywords_value = json.dumps(matched_keywords, sort_keys=True, separators=(",", ":"))
+        signing_input = "|".join(
+            [
+                "1",
+                action_log_id,
+                proxy_request_id,
+                str(now),
+                str(exp),
+                request_path,
+                body_hash,
+                policy_id_value,
+                keywords_value,
+            ]
+        )
+        sig = self._sign_hitl_continuation_token(signing_input)
+        return ".".join(
+            [
+                "1",
+                action_log_id,
+                proxy_request_id,
+                str(now),
+                str(exp),
+                request_path,
+                body_hash,
+                policy_id_value,
+                base64.urlsafe_b64encode(keywords_value.encode("utf-8")).decode("ascii").rstrip("="),
+                sig,
+            ]
+        )
+
+    def _parse_hitl_continuation_token(self, token: str) -> Optional[Dict[str, Any]]:
+        parts = (token or "").split(".")
+        if len(parts) != 10:
+            return None
+        (
+            version,
+            action_log_id,
+            proxy_request_id,
+            iat_s,
+            exp_s,
+            path,
+            body_hash,
+            policy_id,
+            keywords_b64,
+            sig,
+        ) = parts
+        if version != "1":
+            return None
+        try:
+            iat = int(iat_s)
+            exp = int(exp_s)
+        except ValueError:
+            return None
+        pad = "=" * ((4 - len(keywords_b64) % 4) % 4)
+        try:
+            keywords_json = base64.urlsafe_b64decode((keywords_b64 + pad).encode("ascii")).decode(
+                "utf-8"
+            )
+            matched_keywords = json.loads(keywords_json)
+        except Exception:
+            return None
+        if not isinstance(matched_keywords, list) or not all(isinstance(x, str) for x in matched_keywords):
+            return None
+
+        signing_input = "|".join(
+            [
+                "1",
+                action_log_id,
+                proxy_request_id,
+                str(iat),
+                str(exp),
+                path,
+                body_hash,
+                policy_id,
+                json.dumps(matched_keywords, sort_keys=True, separators=(",", ":")),
+            ]
+        )
+        expected_sig = self._sign_hitl_continuation_token(signing_input)
+        if not hmac.compare_digest(expected_sig, sig):
+            return None
+
+        return {
+            "action_log_id": action_log_id,
+            "proxy_request_id": proxy_request_id,
+            "iat": iat,
+            "exp": exp,
+            "path": path,
+            "body_hash": body_hash,
+            "policy_id": policy_id or None,
+            "matched_keywords": matched_keywords,
+        }
+
     async def _check_control_plane_hitl(
         self,
         request: Request,
@@ -627,12 +778,24 @@ class ProxyHandler:
         on the control plane and return a 202 response with poll info.
         Returns None if no HITL policy applies.
         """
-        if not control_plane_client.is_connected:
-            return None
+        continuation_raw = (request.headers.get(self._HITL_CONTINUATION_HEADER) or "").strip()
 
-        hitl_policies = control_plane_client.get_require_approval_policies()
-        if not hitl_policies:
-            return None
+        def _policy_matches_request(*, policy: Dict[str, Any], path: str, text: str) -> bool:
+            rules = policy.get("rules", {})
+            policy_action_type = rules.get("action_type", "")
+
+            if policy_action_type and policy_action_type != "*":
+                is_chat = path.endswith("/v1/chat/completions")
+                if policy_action_type == "llm.chat.completion" and not is_chat:
+                    return False
+
+            blocked_keywords = rules.get("blocked_keywords", [])
+            if blocked_keywords:
+                return any(isinstance(kw, str) and kw.lower() in text for kw in blocked_keywords)
+            return True
+
+        canonical_path = self._canonical_request_path(request)
+        body_hash = self._hitl_body_hash(request_body)
 
         input_text = ""
         if isinstance(request_body, dict):
@@ -644,29 +807,421 @@ class ProxyHandler:
                     if isinstance(m, dict)
                 ).lower()
 
-        for policy in hitl_policies:
-            rules = policy.get("rules", {})
-            policy_action_type = rules.get("action_type", "")
+        if continuation_raw:
+            if not control_plane_client.is_connected:
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="ERROR",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    reason="HITL continuation requires control plane connectivity",
+                    attributes={"block_type": "hitl_continuation", "error": "control_plane_disconnected"},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    message="Human approval service is unavailable (control plane disconnected)",
+                    error_type="approval_service_unavailable",
+                    code="hitl_unavailable",
+                )
 
-            # Action type must match (or be wildcard)
-            if policy_action_type and policy_action_type != "*":
-                path = (request.url.path or "").rstrip("/")
-                is_chat = path.endswith("/v1/chat/completions")
-                if policy_action_type == "llm.chat.completion" and not is_chat:
-                    continue
+            claims = self._parse_hitl_continuation_token(continuation_raw)
+            if not claims:
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="ERROR",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_403_FORBIDDEN,
+                    reason="Invalid HITL continuation token",
+                    attributes={"block_type": "hitl_continuation", "error": "invalid_token"},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="Invalid human approval continuation token",
+                    error_type="hitl_continuation_invalid",
+                    code="hitl_continuation_invalid",
+                )
 
-            # Check blocked_keywords if present
-            blocked_keywords = rules.get("blocked_keywords", [])
+            now = int(time.time())
+            if now > int(claims["exp"]) or now < int(claims["iat"]):
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="ERROR",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_403_FORBIDDEN,
+                    reason="Expired HITL continuation token",
+                    attributes={"block_type": "hitl_continuation", "error": "token_expired"},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="Human approval continuation token expired",
+                    error_type="hitl_continuation_expired",
+                    code="hitl_continuation_expired",
+                )
+
+            if claims["path"] != canonical_path:
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="ERROR",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_403_FORBIDDEN,
+                    reason="HITL continuation token does not match request path",
+                    attributes={"block_type": "hitl_continuation", "error": "path_mismatch"},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="Human approval continuation token does not match this endpoint",
+                    error_type="hitl_continuation_invalid",
+                    code="hitl_continuation_invalid",
+                )
+
+            if claims["body_hash"] != body_hash:
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="ERROR",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_403_FORBIDDEN,
+                    reason="HITL continuation token does not match request body",
+                    attributes={"block_type": "hitl_continuation", "error": "body_mismatch"},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="Human approval continuation token does not match this request body",
+                    error_type="hitl_continuation_invalid",
+                    code="hitl_continuation_invalid",
+                )
+
+            resume_header = "x-data443-proxy-request-id"
+            incoming_resume = (request.headers.get(resume_header) or "").strip()
+            if incoming_resume and incoming_resume != str(claims.get("proxy_request_id", "")):
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="ERROR",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_403_FORBIDDEN,
+                    reason="HITL continuation resume header does not match token",
+                    attributes={"block_type": "hitl_continuation", "error": "resume_id_mismatch"},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="Resume request id does not match the original gated request",
+                    error_type="hitl_continuation_invalid",
+                    code="hitl_continuation_invalid",
+                )
+
+            action_log_id = str(claims.get("action_log_id", "")).strip()
+            if not action_log_id:
+                return self._json_error_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="Invalid human approval continuation token",
+                    error_type="hitl_continuation_invalid",
+                    code="hitl_continuation_invalid",
+                )
+
+            approval_status = await control_plane_client.poll_hitl_status(action_log_id)
+            normalized = (approval_status or "").strip().lower()
+
+            if approval_status is None:
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="ERROR",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    reason="Unable to verify human approval status",
+                    attributes={"block_type": "hitl_continuation", "action_log_id": action_log_id},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    message="Unable to verify human approval status",
+                    error_type="approval_status_unavailable",
+                    code="hitl_status_unavailable",
+                )
+
+            if normalized == "pending":
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="PENDING_APPROVAL",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=202,
+                    reason="Human approval still pending",
+                    attributes={
+                        "block_type": "hitl_continuation",
+                        "action_log_id": action_log_id,
+                    },
+                )
+                return Response(
+                    content=json.dumps(
+                        {
+                            "status": "pending_approval",
+                            "message": "Human approval is still pending",
+                            "action_log_id": action_log_id,
+                        }
+                    ),
+                    status_code=202,
+                    media_type="application/json",
+                )
+
+            if normalized in {"denied", "rejected"}:
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="BLOCK",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_403_FORBIDDEN,
+                    reason="Human approval denied",
+                    attributes={"block_type": "hitl_denied", "action_log_id": action_log_id},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="Request was denied by human approval",
+                    error_type="hitl_denied",
+                    code="hitl_denied",
+                )
+
+            if normalized == "expired":
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="BLOCK",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_403_FORBIDDEN,
+                    reason="Human approval request expired",
+                    attributes={"block_type": "hitl_expired", "action_log_id": action_log_id},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="Human approval request expired",
+                    error_type="hitl_expired",
+                    code="hitl_expired",
+                )
+
+            if normalized != "approved":
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="ERROR",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    reason=f"Unexpected human approval status: {approval_status}",
+                    attributes={"block_type": "hitl_continuation", "action_log_id": action_log_id},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    message="Unable to verify human approval status",
+                    error_type="approval_status_unavailable",
+                    code="hitl_status_unavailable",
+                )
+
+            hitl_policies = control_plane_client.get_require_approval_policies()
+            if not hitl_policies:
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="BLOCK",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_403_FORBIDDEN,
+                    reason="HITL policies are not available for continuation",
+                    attributes={"block_type": "hitl_continuation", "action_log_id": action_log_id},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="Human-in-the-loop policies are not available",
+                    error_type="hitl_policy_unavailable",
+                    code="hitl_policy_unavailable",
+                )
+
+            policy_id = claims.get("policy_id")
+            policy = next(
+                (
+                    p
+                    for p in hitl_policies
+                    if policy_id is not None and str(p.get("id")) == str(policy_id)
+                ),
+                None,
+            )
+            if policy is None:
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="BLOCK",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_403_FORBIDDEN,
+                    reason="Original HITL policy is no longer active",
+                    attributes={"block_type": "hitl_continuation", "action_log_id": action_log_id},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="The original approval policy is no longer active; re-submit for review",
+                    error_type="hitl_policy_revoked",
+                    code="hitl_policy_revoked",
+                )
+
+            if policy.get("action") != "require_approval":
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="BLOCK",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_403_FORBIDDEN,
+                    reason="HITL policy action changed",
+                    attributes={"block_type": "hitl_continuation", "action_log_id": action_log_id},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="The original approval policy is no longer active; re-submit for review",
+                    error_type="hitl_policy_revoked",
+                    code="hitl_policy_revoked",
+                )
+
+            if not _policy_matches_request(policy=policy, path=canonical_path, text=input_text):
+                await self._emit_gateway_event(
+                    request_id=request_id,
+                    decision="BLOCK",
+                    request=request,
+                    request_body=request_body,
+                    model_name=model_name,
+                    provider_name=provider_name,
+                    org_id=org_id,
+                    user_id=user_id,
+                    response_status=status.HTTP_403_FORBIDDEN,
+                    reason="HITL policy no longer matches this request",
+                    attributes={"block_type": "hitl_continuation", "action_log_id": action_log_id},
+                )
+                return self._json_error_response(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="Human approval no longer applies to this request",
+                    error_type="hitl_policy_mismatch",
+                    code="hitl_policy_mismatch",
+                )
+
+            rules = policy.get("rules", {}) or {}
+            blocked_keywords = rules.get("blocked_keywords", []) or []
+            token_keywords = list(claims.get("matched_keywords", []) or [])
+            matched_now = self._matched_blocked_keywords(blocked_keywords=blocked_keywords, input_text=input_text)
             if blocked_keywords:
-                matched = any(kw.lower() in input_text for kw in blocked_keywords)
-                if not matched:
-                    continue
+                if sorted(matched_now) != sorted(token_keywords):
+                    await self._emit_gateway_event(
+                        request_id=request_id,
+                        decision="BLOCK",
+                        request=request,
+                        request_body=request_body,
+                        model_name=model_name,
+                        provider_name=provider_name,
+                        org_id=org_id,
+                        user_id=user_id,
+                        response_status=status.HTTP_403_FORBIDDEN,
+                        reason="HITL keyword match set changed since token issuance",
+                        attributes={"block_type": "hitl_continuation", "action_log_id": action_log_id},
+                    )
+                    return self._json_error_response(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        message="Request content changed since the approval gate; re-submit for review",
+                        error_type="hitl_body_changed",
+                        code="hitl_body_changed",
+                    )
+
+            await self._emit_gateway_event(
+                request_id=request_id,
+                decision="HITL_APPROVED_CONTINUE",
+                request=request,
+                request_body=request_body,
+                model_name=model_name,
+                provider_name=provider_name,
+                org_id=org_id,
+                user_id=user_id,
+                response_status=200,
+                reason="Human approval verified; continuing request processing",
+                attributes={
+                    "block_type": "hitl_continuation",
+                    "action_log_id": action_log_id,
+                    "policy_id": policy.get("id"),
+                },
+            )
+            return None
+
+        if not control_plane_client.is_connected:
+            return None
+
+        hitl_policies = control_plane_client.get_require_approval_policies()
+        if not hitl_policies:
+            return None
+
+        for policy in hitl_policies:
+            if not _policy_matches_request(policy=policy, path=canonical_path, text=input_text):
+                continue
+
+            rules = policy.get("rules", {}) or {}
+            blocked_keywords = rules.get("blocked_keywords", []) or []
+            matched_keywords = self._matched_blocked_keywords(
+                blocked_keywords=blocked_keywords,
+                input_text=input_text,
+            )
 
             # This policy requires approval — create HITL request
             # Only send metadata, never message content
-            matched_keywords = [
-                kw for kw in blocked_keywords if kw.lower() in input_text
-            ] if blocked_keywords else []
             agent_key = request.headers.get("x-agent-id", "")
             hitl_result = await control_plane_client.create_hitl_request(
                 agent_key=agent_key,
@@ -684,6 +1239,50 @@ class ProxyHandler:
             )
 
             if hitl_result:
+                action_log_id = hitl_result.get("action_log_id")
+                continuation_token: Optional[str] = None
+                try:
+                    if action_log_id:
+                        raw_policy_id = policy.get("id")
+                        policy_id_value = str(raw_policy_id) if raw_policy_id is not None else None
+                        continuation_token = self._build_hitl_continuation_token(
+                            action_log_id=str(action_log_id),
+                            proxy_request_id=request_id,
+                            request_path=canonical_path,
+                            body_hash=body_hash,
+                            policy_id=policy_id_value,
+                            matched_keywords=matched_keywords,
+                        )
+                except RuntimeError:
+                    continuation_token = None
+
+                if not continuation_token:
+                    await self._emit_gateway_event(
+                        request_id=request_id,
+                        decision="ERROR",
+                        request=request,
+                        request_body=request_body,
+                        model_name=model_name,
+                        provider_name=provider_name,
+                        org_id=org_id,
+                        user_id=user_id,
+                        response_status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        reason=(
+                            "Human approval gate is active but CONTROL_PLANE_HITL_CONTINUATION_SECRET "
+                            "is not configured"
+                        ),
+                        attributes={"block_type": "hitl_misconfigured", "policy_id": policy.get("id")},
+                    )
+                    return self._json_error_response(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        message=(
+                            "Request matched an approval policy, but the gateway is not configured "
+                            "for async human approvals (missing signing secret)"
+                        ),
+                        error_type="hitl_misconfigured",
+                        code="hitl_misconfigured",
+                    )
+
                 await self._emit_gateway_event(
                     request_id=request_id,
                     decision="PENDING_APPROVAL",
@@ -705,6 +1304,10 @@ class ProxyHandler:
                         "action_log_id": hitl_result.get("action_log_id"),
                         "poll_url": hitl_result.get("poll_url"),
                         "expires_at": hitl_result.get("expires_at"),
+                        "proxy_request_id": request_id,
+                        "continuation_header": self._HITL_CONTINUATION_HEADER,
+                        "continuation_token": continuation_token,
+                        "resume_request_id_header": "x-data443-proxy-request-id",
                     }),
                     status_code=202,
                     media_type="application/json",

@@ -140,8 +140,15 @@ def collect_startup_validation_errors(*, strict: bool = False) -> List[str]:
             errors.append("CONTROL_PLANE_HITL_POLL_INTERVAL must be > 0")
         if settings.control_plane_hitl_timeout <= 0:
             errors.append("CONTROL_PLANE_HITL_TIMEOUT must be > 0")
+        if settings.control_plane_hitl_continuation_ttl_seconds <= 0:
+            errors.append("CONTROL_PLANE_HITL_CONTINUATION_TTL_SECONDS must be > 0")
         if settings.control_plane_request_timeout <= 0:
             errors.append("CONTROL_PLANE_REQUEST_TIMEOUT must be > 0")
+        if strict and not (settings.control_plane_hitl_continuation_secret or "").strip():
+            errors.append(
+                "CONTROL_PLANE_ENABLED=true with STRICT_STARTUP_VALIDATION=true requires "
+                "CONTROL_PLANE_HITL_CONTINUATION_SECRET to be configured (async HITL continuation)"
+            )
 
     if settings.audit_retention_days < 0:
         errors.append("AUDIT_RETENTION_DAYS must be >= 0")

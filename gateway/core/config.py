@@ -370,6 +370,17 @@ class Settings(BaseSettings):
         default=300,
         description="Max seconds to wait for HITL approval before timing out",
     )
+    control_plane_hitl_continuation_secret: str = Field(
+        default="",
+        description=(
+            "HMAC secret used to sign async HITL continuation tokens "
+            "(set in production when CONTROL_PLANE_ENABLED=true)"
+        ),
+    )
+    control_plane_hitl_continuation_ttl_seconds: int = Field(
+        default=3600,
+        description="Max lifetime (seconds) for a signed HITL continuation token",
+    )
     control_plane_request_timeout: float = Field(
         default=10.0,
         description="HTTP timeout in seconds for control plane API calls",
@@ -401,3 +412,4 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+

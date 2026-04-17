@@ -39,6 +39,8 @@ To enable policy sync, audit federation, and HITL approvals with a Vaikora insta
 | `gateway.controlPlane.enabled` | Enable integration | `true` |
 | `gateway.controlPlane.url` | Vaikora backend URL | `http://vaikora-backend:8000` |
 | `gateway.controlPlane.apiKey` | Vaikora API key (from Settings → API Key) | `vk_abc123...` |
+| `gateway.controlPlane.hitlContinuationSecret` | HMAC secret for async HITL continuation tokens (202 → replay) | `openssl rand -hex 32` |
+| `gateway.controlPlane.hitlContinuationTtlSeconds` | Max continuation token lifetime (seconds) | `3600` |
 
 ```bash
 helm install data443-gw ./helm/data443-gateway \
@@ -47,7 +49,8 @@ helm install data443-gw ./helm/data443-gateway \
   --set gateway.proxyApiKey=<PROXY_KEY> \
   --set gateway.controlPlane.enabled=true \
   --set gateway.controlPlane.url=http://vaikora-backend:8000 \
-  --set gateway.controlPlane.apiKey=<VAIKORA_API_KEY>
+  --set gateway.controlPlane.apiKey=<VAIKORA_API_KEY> \
+  --set gateway.controlPlane.hitlContinuationSecret=<STRONG_RANDOM_SECRET>
 ```
 
 ## Using External PostgreSQL / Redis

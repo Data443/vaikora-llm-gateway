@@ -186,6 +186,104 @@ async def test_hitl_policy_fails_closed_when_approval_request_cannot_be_created(
 
 
 @pytest.mark.asyncio
+async def test_hitl_async_continuation_allows_after_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    import gateway.services.proxy_service as proxy_mod
+
+    monkeypatch.setattr(settings, "control_plane_hitl_continuation_secret", "unit-test-secret")
+    monkeypatch.setattr(settings, "control_plane_hitl_continuation_ttl_seconds", 3600)
+
+    hitl_policies = [
+        {
+            "id": "policy-1",
+            "name": "hitl-sensitive-requests",
+            "action": "require_approval",
+            "rules": {
+                "action_type": "llm.chat.completion",
+                "blocked_keywords": ["transfer money"],
+            },
+        }
+    ]
+
+    stub_control_plane = SimpleNamespace(
+        is_connected=True,
+        get_require_approval_policies=lambda: hitl_policies,
+        create_hitl_request=AsyncMock(
+            return_value={
+                "approval_id": "appr-1",
+                "action_log_id": "log-1",
+                "poll_url": "http://vaikora.local/api/v1/integration/hitl/status/log-1",
+                "expires_at": "2099-01-01T00:00:00Z",
+            }
+        ),
+        health_snapshot=lambda: {"enabled": True, "status": "healthy"},
+    )
+
+    # First call: create + return 202 with continuation token
+    stub_control_plane.poll_hitl_status = AsyncMock(return_value="pending")
+    monkeypatch.setattr(proxy_mod, "control_plane_client", stub_control_plane)
+
+    policy_engine = Mock()
+    policy_engine.cyren_client = Mock(get_circuit_breaker_state=Mock(return_value="closed"))
+    policy_engine.audit_logger = Mock(connected=True)
+
+    handler = ProxyHandler(policy_engine=policy_engine)
+    handler._emit_gateway_event = AsyncMock()  # type: ignore[method-assign]
+
+    gated = await handler._check_control_plane_hitl(
+        request=_build_request(),
+        request_id="req-hitl-1",
+        request_body={
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "please transfer money now"}],
+        },
+        model_name="gpt-4o-mini",
+        provider_name="openai",
+        org_id=None,
+        user_id=None,
+    )
+    assert gated is not None
+    assert gated.status_code == 202
+    body = json.loads(gated.body.decode("utf-8"))
+    token = body["continuation_token"]
+    assert body["continuation_header"] == ProxyHandler._HITL_CONTINUATION_HEADER
+
+    # Second call: approved + same body/path should bypass further HITL gating
+    stub_control_plane.poll_hitl_status = AsyncMock(return_value="approved")
+
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/v1/chat/completions",
+        "raw_path": b"/v1/chat/completions",
+        "query_string": b"",
+        "headers": [
+            (b"content-type", b"application/json"),
+            (handler._HITL_CONTINUATION_HEADER.encode("ascii"), token.encode("ascii")),
+            (b"x-data443-proxy-request-id", b"req-hitl-1"),
+        ],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+    continued_request = Request(scope)
+
+    cleared = await handler._check_control_plane_hitl(
+        request=continued_request,
+        request_id="req-hitl-2",
+        request_body={
+            "model": "gpt-4o-mini",
+            "messages": [{"role": "user", "content": "please transfer money now"}],
+        },
+        model_name="gpt-4o-mini",
+        provider_name="openai",
+        org_id=None,
+        user_id=None,
+    )
+    assert cleared is None
+
+
+@pytest.mark.asyncio
 async def test_health_check_surfaces_control_plane_status(monkeypatch: pytest.MonkeyPatch) -> None:
     import gateway.services.proxy_service as proxy_mod
 
