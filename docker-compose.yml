@@ -9,12 +9,23 @@ services:
       - "${REDIS_BIND_HOST:-127.0.0.1}:6380:6379"
     volumes:
       - redis_data:/data
-    command: >-
-      redis-server
-      --appendonly yes
-      --requirepass ${REDIS_PASSWORD:-changeme_redis}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - |
+        if [ -z "$$REDIS_PASSWORD" ]; then
+          exec redis-server --appendonly yes
+        else
+          exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+        fi
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme_redis}", "ping"]
+      test:
+        [
+          "CMD-SHELL",
+          'if [ -z "$$REDIS_PASSWORD" ]; then redis-cli ping; else redis-cli -a "$$REDIS_PASSWORD" ping; fi',
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -79,7 +90,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_DB: 0
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme_redis}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       REDIS_L1_TTL: 300
       REDIS_L2_TTL: 3600
 

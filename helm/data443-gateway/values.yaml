@@ -3,7 +3,6 @@
 # -----------------------------------------------------------------
 # Required values you MUST set before deploying:
 #   - postgresql.auth.password
-#   - redis.auth.password
 #   - gateway.proxyApiKey
 #   - gateway.controlPlane.apiKey   (if control plane is enabled)
 #   - gateway.controlPlane.url      (if control plane is enabled)
@@ -174,8 +173,9 @@ redis:
   enabled: true
   architecture: standalone
   auth:
-    enabled: true
-    # REQUIRED — set a strong password
+    # When false, Bitnami Redis runs without requirepass and the gateway uses no password.
+    # Set true and set password when Redis must require AUTH (recommended if exposed).
+    enabled: false
     password: ""
     existingSecret: ""
   master:
@@ -195,6 +195,7 @@ externalRedis:
   enabled: false
   host: ""
   port: 6379
+  # Leave empty when the external Redis instance has AUTH disabled.
   password: ""
   existingSecret: ""
   existingSecretKey: "password"

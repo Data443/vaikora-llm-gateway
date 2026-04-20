@@ -122,3 +122,17 @@ Redis port.
 {{- "6379" }}
 {{- end }}
 {{- end }}
+
+{{/*
+Redis password for the gateway: only set when AUTH is enabled (bundled Redis) or when
+using external Redis with a non-empty password. Empty string means connect without AUTH.
+*/}}
+{{- define "data443-gateway.redisPassword" -}}
+{{- if .Values.externalRedis.enabled }}
+{{- .Values.externalRedis.password }}
+{{- else if .Values.redis.auth.enabled }}
+{{- .Values.redis.auth.password }}
+{{- else }}
+{{- "" }}
+{{- end }}
+{{- end }}

@@ -126,7 +126,9 @@ class Settings(BaseSettings):
     redis_host: str = Field(default="localhost", description="Redis host")
     redis_port: int = Field(default=6379, description="Redis port")
     redis_db: int = Field(default=0, description="Redis database")
-    redis_password: str = Field(default="", description="Redis password")
+    redis_password: str = Field(
+        default="", description="Redis password; leave empty when the server has AUTH disabled"
+    )
     redis_l1_ttl: int = Field(
         default=300,
         description="TTL for L1 cache (in-memory) in seconds"

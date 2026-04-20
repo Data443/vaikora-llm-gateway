@@ -13,10 +13,9 @@
 helm repo add bitnami https://charts.bitnami.com/bitnami
 helm repo update
 
-# Install with required values
+# Install with required values (Redis AUTH is optional — see Redis section below)
 helm install data443-gw ./helm/data443-gateway \
   --set postgresql.auth.password=<STRONG_PG_PASSWORD> \
-  --set redis.auth.password=<STRONG_REDIS_PASSWORD> \
   --set gateway.proxyApiKey=<PROXY_API_KEY> \
   --set gateway.admin.apiKey=<ADMIN_API_KEY>
 ```
@@ -26,7 +25,6 @@ helm install data443-gw ./helm/data443-gateway \
 | Value | Description | Example |
 |-------|-------------|---------|
 | `postgresql.auth.password` | PostgreSQL password for the audit database | `my-pg-secret-123` |
-| `redis.auth.password` | Redis password for caching layer | `my-redis-secret-456` |
 | `gateway.proxyApiKey` | API key callers must send via `x-api-key` header | `gw_abc123...` |
 | `gateway.admin.apiKey` | Admin API key for `/admin/*` and audit/metrics endpoints when admin auth is enabled | `adm_abc123...` |
 
@@ -45,7 +43,6 @@ To enable policy sync, audit federation, and HITL approvals with a Vaikora insta
 ```bash
 helm install data443-gw ./helm/data443-gateway \
   --set postgresql.auth.password=<PG_PASSWORD> \
-  --set redis.auth.password=<REDIS_PASSWORD> \
   --set gateway.proxyApiKey=<PROXY_KEY> \
   --set gateway.controlPlane.enabled=true \
   --set gateway.controlPlane.url=http://vaikora-backend:8000 \
@@ -66,7 +63,7 @@ helm install data443-gw ./helm/data443-gateway \
   --set redis.enabled=false \
   --set externalRedis.enabled=true \
   --set externalRedis.host=my-redis-host \
-  --set externalRedis.password=<REDIS_PASSWORD> \
+  --set externalRedis.password=<REDIS_PASSWORD_OR_EMPTY_IF_NO_AUTH> \
   --set gateway.proxyApiKey=<PROXY_KEY>
 ```
 
@@ -149,9 +146,13 @@ helm install data443-gw ./helm/data443-gateway \
 | Value | Default | Description |
 |-------|---------|-------------|
 | `redis.enabled` | `true` | Deploy Redis sub-chart |
-| `redis.auth.password` | `""` | **REQUIRED** — Redis password |
+| `redis.auth.enabled` | `false` | When `true`, Bitnami Redis enables `requirepass`; set `redis.auth.password` |
+| `redis.auth.password` | `""` | Redis password when `redis.auth.enabled` is `true` |
 | `externalRedis.enabled` | `false` | Use external Redis instead |
 | `externalRedis.host` | `""` | External Redis hostname |
+| `externalRedis.password` | `""` | Password for external Redis; leave empty if AUTH is disabled |
+
+With the bundled Redis chart, leave `redis.auth.enabled=false` for no Redis AUTH (default). To require AUTH, set `redis.auth.enabled=true` and set a strong `redis.auth.password`.
 
 ### Resources
 

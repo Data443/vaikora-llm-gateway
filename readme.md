@@ -365,7 +365,7 @@ data443-llm-gateway/
 - [x] Compliance defaults configurable at deployment (retention, masking, redaction)
 - [ ] Enable admin auth: `ADMIN_AUTH_ENABLED=true` and set strong `ADMIN_API_KEY`
 - [ ] Enable JWT where required and set strong `JWT_SECRET`
-- [ ] Set real passwords for `REDIS_PASSWORD` and `POSTGRES_PASSWORD`
+- [ ] Set `POSTGRES_PASSWORD`; set `REDIS_PASSWORD` only when Redis AUTH is enabled (optional when Redis has no password)
 - [ ] Set explicit `CORS_ALLOWED_ORIGINS` (no wildcard with credentials)
 - [ ] Configure required provider API keys
 - [ ] Use production overlay: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
