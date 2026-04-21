@@ -87,7 +87,7 @@ jobs:
               fi
             fi
 
-            if curl -fsS http://localhost:8000/health >/dev/null; then
+            if curl -fsS http://localhost:9000/health >/dev/null; then
               ready=1
               break
             fi
@@ -104,8 +104,8 @@ jobs:
             exit 1
           fi
 
-          curl -fsS http://localhost:8000/health
-          curl -fsS http://localhost:8000/ready
+          curl -fsS http://localhost:9000/health
+          curl -fsS http://localhost:9000/ready
 
       - name: Run unit tests
         run: |
