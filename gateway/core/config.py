@@ -5,7 +5,7 @@ Environment variables and settings for the gateway.
 All sensitive data loaded from environment variables.
 """
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +29,26 @@ class Settings(BaseSettings):
         default=10_485_760,
         description="Maximum request body size in bytes (default 10 MB); 0 disables",
     )
+
+    @field_validator("max_request_body_bytes", mode="before")
+    @classmethod
+    def coerce_max_request_body_bytes(cls, v: object) -> int:
+        """Parse ints from env/YAML including scientific notation (e.g. 1.048576e+07)."""
+        if v is None:
+            return 10_485_760
+        if isinstance(v, bool):
+            raise ValueError("max_request_body_bytes cannot be boolean")
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float):
+            return int(v)
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return 10_485_760
+            return int(float(s))
+        return int(v)
+
     strict_startup_validation: bool = Field(
         default=False,
         description=(
