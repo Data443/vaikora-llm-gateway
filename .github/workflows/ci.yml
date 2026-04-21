@@ -108,6 +108,8 @@ jobs:
           curl -fsS http://localhost:9000/ready
 
       - name: Run unit tests
+        env:
+          GATEWAY_BASE_URL: http://localhost:9000
         run: |
           python -m pytest -q --import-mode=importlib tests/py -o asyncio_default_fixture_loop_scope=function
 
