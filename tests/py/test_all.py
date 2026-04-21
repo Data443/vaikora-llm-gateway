@@ -491,10 +491,52 @@ def test_managed_agent_proxy_safe_prompt() -> None:
     if not LLM_API_KEY:
         pytest.skip("LLM_API_KEY/OPENAI_API_KEY not set")
 
+    # Ensure managed-agent prereqs exist for this test regardless of execution order.
+    _http(
+        "POST",
+        "/admin/agents/create",
+        {
+            "agent_id": "agent-1",
+            "display_name": "Agent 1",
+            "agent_type": "assistant",
+            "status": "ACTIVE",
+            "wrapped": False,
+            "metadata": {"source": "pytest"},
+            "changed_by": "pytest",
+        },
+        admin=True,
+    )
+    _http(
+        "POST",
+        "/admin/agents/wrap",
+        {
+            "agent_id": "agent-2",
+            "display_name": "Agent 2",
+            "agent_type": "assistant",
+            "status": "ACTIVE",
+            "metadata": {"source": "pytest"},
+            "changed_by": "pytest",
+        },
+        admin=True,
+    )
+    _http(
+        "POST",
+        "/admin/agents/link",
+        {
+            "source_agent_id": "agent-1",
+            "target_agent_id": "agent-2",
+            "protocol": "A2A",
+            "status": "ACTIVE",
+            "metadata": {"source": "pytest"},
+            "changed_by": "pytest",
+        },
+        admin=True,
+    )
+
     extra = {}
     a2a_enabled = _env("A2A_INTERACTION_ENFORCEMENT_ENABLED", "false").lower() == "true"
     if a2a_enabled:
-        _, interaction_resp, _ = _http(
+        interaction_status, interaction_resp, interaction_raw = _http(
             "POST",
             "/admin/a2a/interactions",
             {
@@ -506,14 +548,16 @@ def test_managed_agent_proxy_safe_prompt() -> None:
             },
             admin=True,
         )
+        _assert_status(interaction_status, 200, f"create a2a interaction for managed proxy ({interaction_raw})")
         iid = interaction_resp.get("interaction", {}).get("interaction_id", "")
         if iid:
-            _http(
+            approve_status, _, approve_raw = _http(
                 "POST",
                 f"/admin/a2a/interactions/{iid}/approve",
                 {"reviewed_by": "pytest", "reason": "test"},
                 admin=True,
             )
+            _assert_status(approve_status, 200, f"approve a2a interaction for managed proxy ({approve_raw})")
             extra["x-a2a-interaction-id"] = iid
 
     status, parsed, _ = _http(

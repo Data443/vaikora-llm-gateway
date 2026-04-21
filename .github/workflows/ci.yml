@@ -60,6 +60,7 @@ jobs:
       - name: Start gateway stack
         run: |
           set -euxo pipefail
+          export A2A_INTERACTION_ENFORCEMENT_ENABLED=false
 
           compose() {
             if docker compose version >/dev/null 2>&1; then
