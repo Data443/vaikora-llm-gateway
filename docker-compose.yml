@@ -170,9 +170,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    networks:
-      - default
-      - vaikora-network
     restart: unless-stopped
 
 volumes:
@@ -181,6 +178,3 @@ volumes:
 
 networks:
   default:
-  vaikora-network:
-    external: true
-    name: vaikora-main_vaikora-network
