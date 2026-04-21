@@ -48,14 +48,16 @@ bash tests/live_gateway_console_strict.sh
 - `tests/sh/strict_on.sh` enables provider entitlements based on configured API keys.
 - Set `STRICT_ENABLE_ALL_PROVIDERS=true` to force-enable all provider entitlements.
 
+## Load testing (k6)
+
+Client-aligned gateway vs Vaikora lanes and charter: see `tests/load/README.md` and `docs/LOAD_TEST_CHARTER_30PCT.md`.
+
 ## Extension Pattern
 
 Add future files under these folders:
 
 - Python tests: `tests/py/...`
 - Shell runners/utilities: `tests/sh/...`
+- Load tests: `tests/load/k6/...`
 
 The runner auto-discovers `tests/py/test_*.py` recursively.
-
-
- 
