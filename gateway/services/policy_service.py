@@ -133,6 +133,11 @@ class PolicyEngine:
         ip_risk = ip_response.risk_level if ip_response else None
         url_risk = self._map_category_to_risk(url_response.category) if url_response else None
 
+        # Cyren G3 represents private IP sources (known reputation class), not malicious.
+        # Treat it as high trust so private subnet traffic does not get hard-blocked.
+        if ip_response and ip_response.ip_class == "G3":
+            ip_risk = 100
+
         # Return higher risk if both available
         if ip_risk is not None and url_risk is not None:
             return min(ip_risk, url_risk)  # Take the lower (more conservative) score
