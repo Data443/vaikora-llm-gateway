@@ -45,7 +45,7 @@ def _env(name: str, default: str = "") -> str:
 
 ADMIN_AUTH_ENABLED = _env("ADMIN_AUTH_ENABLED", "false").lower() == "true"
 ADMIN_API_KEY = _env("ADMIN_API_KEY", "")
-LLM_API_KEY = _env("LLM_API_KEY", "") or _env("OPENAI_API_KEY", "")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
 PROXY_API_KEY_ENABLED = _env("PROXY_API_KEY_ENABLED", "false").lower() == "true"
 PROXY_API_KEY = _env("PROXY_API_KEY", "")
 
