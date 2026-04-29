@@ -304,3 +304,100 @@ async def test_health_check_surfaces_control_plane_status(monkeypatch: pytest.Mo
 
     assert health["status"] == "degraded"
     assert health["components"]["control_plane"]["status"] == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_emit_gateway_event_queues_canonical_chat_action_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gateway.services.proxy_service as proxy_mod
+
+    stub_control_plane = SimpleNamespace(
+        is_connected=True,
+        queue_audit_event=Mock(),
+    )
+    monkeypatch.setattr(proxy_mod, "control_plane_client", stub_control_plane)
+    monkeypatch.setattr(proxy_mod.audit_logger, "log_gateway_event", AsyncMock())
+
+    policy_engine = Mock()
+    policy_engine.cyren_client = Mock(get_circuit_breaker_state=Mock(return_value="closed"))
+    policy_engine.audit_logger = Mock(connected=True)
+
+    handler = ProxyHandler(policy_engine=policy_engine)
+
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/agents/agent-1/v1/chat/completions",
+        "raw_path": b"/agents/agent-1/v1/chat/completions",
+        "query_string": b"",
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"x-agent-id", b"agent-1"),
+        ],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+    request = Request(scope)
+
+    await handler._emit_gateway_event(
+        request_id="req-1",
+        decision="ALLOW",
+        request=request,
+        request_body={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        model_name="gpt-4o-mini",
+        provider_name="openai",
+        org_id=None,
+        user_id=None,
+        response_status=200,
+        reason="ok",
+        attributes={"detected": [{"type": "none"}]},
+        risk_score=0.0,
+        response_time_ms=12,
+    )
+
+    queued_event = stub_control_plane.queue_audit_event.call_args.args[0]
+    assert queued_event["agent_key"] == "agent-1"
+    assert queued_event["action_type"] == "llm.chat.completion"
+
+
+@pytest.mark.asyncio
+async def test_emit_gateway_event_skips_control_plane_audit_without_agent_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gateway.services.proxy_service as proxy_mod
+
+    stub_control_plane = SimpleNamespace(
+        is_connected=True,
+        queue_audit_event=Mock(),
+    )
+    monkeypatch.setattr(proxy_mod, "control_plane_client", stub_control_plane)
+    monkeypatch.setattr(proxy_mod.audit_logger, "log_gateway_event", AsyncMock())
+
+    policy_engine = Mock()
+    policy_engine.cyren_client = Mock(get_circuit_breaker_state=Mock(return_value="closed"))
+    policy_engine.audit_logger = Mock(connected=True)
+
+    handler = ProxyHandler(policy_engine=policy_engine)
+
+    request = _build_request()
+
+    await handler._emit_gateway_event(
+        request_id="req-no-agent",
+        decision="ALLOW",
+        request=request,
+        request_body={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "hi"}]},
+        model_name="gpt-4o-mini",
+        provider_name="openai",
+        org_id=None,
+        user_id=None,
+        response_status=200,
+        reason="ok",
+        attributes=None,
+        risk_score=0.0,
+        response_time_ms=10,
+    )
+
+    stub_control_plane.queue_audit_event.assert_not_called()

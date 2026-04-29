@@ -77,6 +77,13 @@ class ProxyHandler:
         normalized = (path or "").rstrip("/")
         return normalized == "/v1/chat/completions" or normalized.endswith("/v1/chat/completions")
 
+    def _action_type_for_path(self, path: str) -> str:
+        """Map request paths to the control-plane action_type contract."""
+        normalized = (path or "").rstrip("/")
+        if self._is_chat_completions_path(normalized):
+            return "llm.chat.completion"
+        return normalized or path or ""
+
     async def handle_request(self, request: Request) -> Response:
         """
         Handle incoming LLM API request.
@@ -1225,7 +1232,7 @@ class ProxyHandler:
             agent_key = request.headers.get("x-agent-id", "")
             hitl_result = await control_plane_client.create_hitl_request(
                 agent_key=agent_key,
-                action_type="llm.chat.completion",
+                action_type=self._action_type_for_path(request.url.path),
                 action_details={
                     "model": model_name,
                     "provider": provider_name,
@@ -1514,29 +1521,36 @@ class ProxyHandler:
 
         # Audit federation: queue metadata (no content) to the control plane
         if control_plane_client.is_connected:
+            agent_key = str(agent_context.get("agent_id") or "").strip()
             threats = [
                 d.get("type", "unknown")
                 for d in merged_attributes.get("detected", [])
                 if isinstance(d, dict)
             ] if isinstance(merged_attributes.get("detected"), list) else []
 
-            control_plane_client.queue_audit_event({
-                "event_id": request_id,
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "agent_key": agent_context.get("agent_id", ""),
-                "action_type": request.url.path or "",
-                "decision": decision.lower() if isinstance(decision, str) else str(decision),
-                "risk_score": float(risk_score) if risk_score else 0.0,
-                "threats_detected": threats,
-                "policy_ids_matched": [],
-                "execution_time_ms": response_time_ms or 0,
-                "proxy_instance_id": "data443-gateway",
-                "metadata": {
-                    "provider": provider_name,
-                    "model": model_name,
-                    "response_status": response_status,
-                },
-            })
+            if not agent_key:
+                logger.debug(
+                    "Skipping control-plane audit federation for request {} without managed agent context",
+                    request_id,
+                )
+            else:
+                control_plane_client.queue_audit_event({
+                    "event_id": request_id,
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "agent_key": agent_key,
+                    "action_type": self._action_type_for_path(request.url.path),
+                    "decision": decision.lower() if isinstance(decision, str) else str(decision),
+                    "risk_score": float(risk_score) if risk_score else 0.0,
+                    "threats_detected": threats,
+                    "policy_ids_matched": [],
+                    "execution_time_ms": response_time_ms or 0,
+                    "proxy_instance_id": "data443-gateway",
+                    "metadata": {
+                        "provider": provider_name,
+                        "model": model_name,
+                        "response_status": response_status,
+                    },
+                })
 
     def _json_error_response(
         self,
