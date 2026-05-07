@@ -1,0 +1,258 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "data443-gateway.fullname" . }}
+  labels:
+    {{- include "data443-gateway.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "data443-gateway.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "data443-gateway.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "data443-gateway.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            # ---- Server ----
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "8000"
+            - name: LOG_LEVEL
+              value: {{ .Values.gateway.logLevel | quote }}
+            - name: LOG_FORMAT
+              value: {{ .Values.gateway.logFormat | quote }}
+            - name: WORKERS
+              value: {{ .Values.gateway.workers | quote }}
+            - name: UPSTREAM_TIMEOUT_SECONDS
+              value: {{ .Values.gateway.upstreamTimeoutSeconds | quote }}
+            - name: MAX_REQUEST_BODY_BYTES
+              value: {{ .Values.gateway.maxRequestBodyBytes | quote }}
+            - name: TRUST_PROXY_HEADERS
+              value: {{ .Values.gateway.trustProxyHeaders | quote }}
+            - name: STRICT_STARTUP_VALIDATION
+              value: {{ .Values.gateway.strictStartupValidation | quote }}
+
+            # ---- Rate Limiting ----
+            - name: RATE_LIMIT_ENABLED
+              value: {{ .Values.gateway.rateLimit.enabled | quote }}
+            - name: RATE_LIMIT_WINDOW_SECONDS
+              value: {{ .Values.gateway.rateLimit.windowSeconds | quote }}
+            - name: RATE_LIMIT_STORAGE
+              value: {{ .Values.gateway.rateLimit.storage | quote }}
+            - name: RATE_LIMIT_PROXY_REQUESTS
+              value: {{ .Values.gateway.rateLimit.proxyRequests | quote }}
+            - name: RATE_LIMIT_ADMIN_REQUESTS
+              value: {{ .Values.gateway.rateLimit.adminRequests | quote }}
+
+            # ---- PostgreSQL ----
+            - name: POSTGRES_HOST
+              value: {{ include "data443-gateway.pgHost" . | quote }}
+            - name: POSTGRES_PORT
+              value: {{ include "data443-gateway.pgPort" . | quote }}
+            - name: POSTGRES_DB
+              value: {{ include "data443-gateway.pgDatabase" . | quote }}
+            - name: POSTGRES_USER
+              value: {{ include "data443-gateway.pgUser" . | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "data443-gateway.fullname" . }}
+                  key: POSTGRES_PASSWORD
+            - name: DB_MIGRATIONS_ENABLED
+              value: "true"
+
+            # ---- Redis ----
+            - name: REDIS_HOST
+              value: {{ include "data443-gateway.redisHost" . | quote }}
+            - name: REDIS_PORT
+              value: {{ include "data443-gateway.redisPort" . | quote }}
+            - name: REDIS_DB
+              value: "0"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "data443-gateway.fullname" . }}
+                  key: REDIS_PASSWORD
+
+            # ---- Audit ----
+            - name: AUDIT_RETENTION_DAYS
+              value: {{ .Values.gateway.audit.retentionDays | quote }}
+            - name: AUDIT_MASK_SENSITIVE_FIELDS
+              value: {{ .Values.gateway.audit.maskSensitiveFields | quote }}
+            - name: AUDIT_REDACT_MESSAGE_CONTENT
+              value: {{ .Values.gateway.audit.redactMessageContent | quote }}
+            - name: AUDIT_PURGE_ENABLED
+              value: {{ .Values.gateway.audit.purgeEnabled | quote }}
+
+            # ---- Proxy Auth ----
+            - name: PROXY_API_KEY_ENABLED
+              value: {{ .Values.gateway.proxyApiKeyEnabled | quote }}
+            - name: PROXY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "data443-gateway.fullname" . }}
+                  key: PROXY_API_KEY
+
+            # ---- Admin Auth ----
+            - name: ADMIN_AUTH_ENABLED
+              value: {{ .Values.gateway.admin.authEnabled | quote }}
+            - name: ADMIN_AUTH_MODE
+              value: {{ .Values.gateway.admin.authMode | quote }}
+            - name: ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "data443-gateway.fullname" . }}
+                  key: ADMIN_API_KEY
+            {{- if .Values.gateway.admin.allowedIps }}
+            - name: ADMIN_ALLOWED_IPS
+              value: {{ .Values.gateway.admin.allowedIps | quote }}
+            {{- end }}
+
+            # ---- JWT ----
+            - name: JWT_ENABLED
+              value: {{ .Values.gateway.jwt.enabled | quote }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "data443-gateway.fullname" . }}
+                  key: JWT_SECRET
+            - name: JWT_ISSUER
+              value: {{ .Values.gateway.jwt.issuer | quote }}
+            - name: JWT_AUDIENCE
+              value: {{ .Values.gateway.jwt.audience | quote }}
+
+            # ---- Cyren ----
+            - name: CYREN_IPREP_URL
+              value: {{ .Values.gateway.cyren.iprepUrl | quote }}
+            - name: CYREN_URLF_URL
+              value: {{ .Values.gateway.cyren.urlfUrl | quote }}
+            - name: CYREN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "data443-gateway.fullname" . }}
+                  key: CYREN_API_KEY
+            - name: CYREN_TIMEOUT
+              value: {{ .Values.gateway.cyren.timeout | quote }}
+            - name: CYREN_FAIL_CLOSED
+              value: {{ .Values.gateway.cyren.failClosed | quote }}
+
+            # ---- LLM Provider ----
+            - name: LLM_ENDPOINT
+              value: {{ .Values.gateway.llm.endpoint | quote }}
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "data443-gateway.fullname" . }}
+                  key: LLM_API_KEY
+
+            # ---- Policy Thresholds ----
+            - name: ALLOW_THRESHOLD
+              value: {{ .Values.gateway.policy.allowThreshold | quote }}
+            - name: ALLOW_LOG_THRESHOLD
+              value: {{ .Values.gateway.policy.allowLogThreshold | quote }}
+            - name: CONSTRAIN_THRESHOLD
+              value: {{ .Values.gateway.policy.constrainThreshold | quote }}
+
+            # ---- Circuit Breaker ----
+            - name: CIRCUIT_BREAKER_FAILURE_THRESHOLD
+              value: {{ .Values.gateway.circuitBreaker.failureThreshold | quote }}
+            - name: CIRCUIT_BREAKER_RECOVERY_TIMEOUT
+              value: {{ .Values.gateway.circuitBreaker.recoveryTimeout | quote }}
+
+            # ---- Agent Governance ----
+            - name: AGENT_LINK_ENFORCEMENT_ENABLED
+              value: {{ .Values.gateway.agent.linkEnforcementEnabled | quote }}
+            - name: A2A_INTERACTION_ENFORCEMENT_ENABLED
+              value: {{ .Values.gateway.agent.a2aInteractionEnforcementEnabled | quote }}
+
+            # ---- Control Plane (Vaikora) ----
+            - name: CONTROL_PLANE_ENABLED
+              value: {{ .Values.gateway.controlPlane.enabled | quote }}
+            {{- if .Values.gateway.controlPlane.enabled }}
+            - name: CONTROL_PLANE_URL
+              value: {{ .Values.gateway.controlPlane.url | quote }}
+            - name: CONTROL_PLANE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "data443-gateway.fullname" . }}
+                  key: CONTROL_PLANE_API_KEY
+            - name: CONTROL_PLANE_POLICY_SYNC_INTERVAL
+              value: {{ .Values.gateway.controlPlane.policySyncIntervalSeconds | quote }}
+            - name: CONTROL_PLANE_AUDIT_PUSH_INTERVAL
+              value: {{ .Values.gateway.controlPlane.auditPushIntervalSeconds | quote }}
+            - name: CONTROL_PLANE_AUDIT_BATCH_SIZE
+              value: {{ .Values.gateway.controlPlane.auditBatchSize | quote }}
+            - name: CONTROL_PLANE_HITL_POLL_INTERVAL
+              value: {{ .Values.gateway.controlPlane.hitlPollIntervalSeconds | quote }}
+            - name: CONTROL_PLANE_HITL_TIMEOUT
+              value: {{ .Values.gateway.controlPlane.hitlTimeoutSeconds | quote }}
+            - name: CONTROL_PLANE_HITL_CONTINUATION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "data443-gateway.fullname" . }}
+                  key: CONTROL_PLANE_HITL_CONTINUATION_SECRET
+            - name: CONTROL_PLANE_HITL_CONTINUATION_TTL_SECONDS
+              value: {{ .Values.gateway.controlPlane.hitlContinuationTtlSeconds | quote }}
+            - name: CONTROL_PLANE_REQUEST_TIMEOUT
+              value: {{ .Values.gateway.controlPlane.requestTimeoutSeconds | quote }}
+            {{- end }}
+
+            # ---- OpenTelemetry ----
+            {{- if .Values.gateway.otel.enabled }}
+            - name: OTEL_ENABLED
+              value: "true"
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.gateway.otel.serviceName | quote }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.gateway.otel.otlpEndpoint | quote }}
+            {{- end }}
+
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

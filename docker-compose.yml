@@ -1,0 +1,180 @@
+# Data443 LLM Gateway - Docker Compose
+
+services:
+  # Redis - L1/L2 Caching
+  redis:
+    image: redis:7-alpine
+    container_name: data443-gateway-redis
+    ports:
+      - "${REDIS_BIND_HOST:-127.0.0.1}:6380:6379"
+    volumes:
+      - redis_data:/data
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - |
+        if [ -z "$$REDIS_PASSWORD" ]; then
+          exec redis-server --appendonly yes
+        else
+          exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+        fi
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'if [ -z "$$REDIS_PASSWORD" ]; then redis-cli ping; else redis-cli -a "$$REDIS_PASSWORD" ping; fi',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # PostgreSQL - Audit Logging
+  postgres:
+    image: postgres:15-alpine
+    container_name: data443-gateway-postgres
+    ports:
+      - "${POSTGRES_BIND_HOST:-127.0.0.1}:5433:5432"
+    environment:
+      POSTGRES_DB: data443_audit
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # LLM Gateway
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: data443-gateway
+    ports:
+      - "9000:8000"
+    environment:
+      # Server
+      HOST: "0.0.0.0"
+      PORT: 8000
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      WORKERS: ${WORKERS:-1}
+      UPSTREAM_TIMEOUT_SECONDS: ${UPSTREAM_TIMEOUT_SECONDS:-60.0}
+      MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-10485760}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+
+      # Rate limiting
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+      RATE_LIMIT_STORAGE: ${RATE_LIMIT_STORAGE:-auto}
+      RATE_LIMIT_REDIS_PREFIX: ${RATE_LIMIT_REDIS_PREFIX:-gw:ratelimit}
+      RATE_LIMIT_PROXY_REQUESTS: ${RATE_LIMIT_PROXY_REQUESTS:-120}
+      RATE_LIMIT_ADMIN_REQUESTS: ${RATE_LIMIT_ADMIN_REQUESTS:-300}
+      RATE_LIMIT_AUDIT_REQUESTS: ${RATE_LIMIT_AUDIT_REQUESTS:-120}
+
+      # Cyren API
+      CYREN_IPREP_URL: ${CYREN_IPREP_URL:-https://try-now-ipreputation.data443.io/ctipd/iprep}
+      CYREN_URLF_URL: ${CYREN_URLF_URL:-https://try-now-urlcat.data443.io/ctwsd/websec}
+      CYREN_API_KEY: ${CYREN_API_KEY:-}
+      CYREN_TIMEOUT: 5.0
+      CYREN_RETRY_ATTEMPTS: 2
+      CYREN_FAIL_CLOSED: ${CYREN_FAIL_CLOSED:-true}
+
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_L1_TTL: 300
+      REDIS_L2_TTL: 3600
+
+      # PostgreSQL
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: data443_audit
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-30}
+      AUDIT_MASK_SENSITIVE_FIELDS: ${AUDIT_MASK_SENSITIVE_FIELDS:-true}
+      AUDIT_REDACT_MESSAGE_CONTENT: ${AUDIT_REDACT_MESSAGE_CONTENT:-false}
+      AUDIT_MAX_STRING_LENGTH: ${AUDIT_MAX_STRING_LENGTH:-4000}
+      AUDIT_PURGE_ENABLED: ${AUDIT_PURGE_ENABLED:-true}
+      AUDIT_PURGE_INTERVAL_SECONDS: ${AUDIT_PURGE_INTERVAL_SECONDS:-3600}
+      DB_MIGRATIONS_ENABLED: ${DB_MIGRATIONS_ENABLED:-true}
+      DB_DDL_BOOTSTRAP_FALLBACK: ${DB_DDL_BOOTSTRAP_FALLBACK:-false}
+
+      # Target LLM (OpenAI)
+      LLM_ENDPOINT: ${LLM_ENDPOINT:-https://api.openai.com}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+
+      # JWT Authentication
+      JWT_ENABLED: ${JWT_ENABLED:-false}
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_ISSUER: ${JWT_ISSUER:-data443-gateway}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-data443-gateway}
+
+      # Admin hardening
+      ADMIN_AUTH_ENABLED: ${ADMIN_AUTH_ENABLED:-false}
+      ADMIN_AUTH_MODE: ${ADMIN_AUTH_MODE:-api_key}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-change_me_admin_key}
+      ADMIN_ALLOWED_IPS: ${ADMIN_ALLOWED_IPS:-}
+
+      # Proxy API key auth
+      PROXY_API_KEY_ENABLED: ${PROXY_API_KEY_ENABLED:-false}
+      PROXY_API_KEY: ${PROXY_API_KEY:-}
+
+      # Agent governance
+      AGENT_LINK_ENFORCEMENT_ENABLED: ${AGENT_LINK_ENFORCEMENT_ENABLED:-true}
+      A2A_INTERACTION_ENFORCEMENT_ENABLED: ${A2A_INTERACTION_ENFORCEMENT_ENABLED:-true}
+      AGENT_INTERACTION_RETENTION_DAYS: ${AGENT_INTERACTION_RETENTION_DAYS:-30}
+
+      # Policy thresholds
+      ALLOW_THRESHOLD: 80
+      ALLOW_LOG_THRESHOLD: 50
+      CONSTRAIN_THRESHOLD: 20
+
+      # Circuit breaker
+      CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5
+      CIRCUIT_BREAKER_RECOVERY_TIMEOUT: 60
+
+      # Control Plane (Vaikora integration)
+      CONTROL_PLANE_ENABLED: ${CONTROL_PLANE_ENABLED:-false}
+      CONTROL_PLANE_URL: ${CONTROL_PLANE_URL:-http://vaikora-backend:8000}
+      CONTROL_PLANE_API_KEY: ${CONTROL_PLANE_API_KEY:-}
+      CONTROL_PLANE_POLICY_SYNC_INTERVAL: ${CONTROL_PLANE_POLICY_SYNC_INTERVAL:-60}
+      CONTROL_PLANE_AUDIT_PUSH_INTERVAL: ${CONTROL_PLANE_AUDIT_PUSH_INTERVAL:-30}
+      CONTROL_PLANE_AUDIT_BATCH_SIZE: ${CONTROL_PLANE_AUDIT_BATCH_SIZE:-50}
+      CONTROL_PLANE_HITL_POLL_INTERVAL: ${CONTROL_PLANE_HITL_POLL_INTERVAL:-5}
+      CONTROL_PLANE_HITL_TIMEOUT: ${CONTROL_PLANE_HITL_TIMEOUT:-300}
+      CONTROL_PLANE_HITL_CONTINUATION_SECRET: ${CONTROL_PLANE_HITL_CONTINUATION_SECRET:-}
+      CONTROL_PLANE_HITL_CONTINUATION_TTL_SECONDS: ${CONTROL_PLANE_HITL_CONTINUATION_TTL_SECONDS:-3600}
+      CONTROL_PLANE_REQUEST_TIMEOUT: ${CONTROL_PLANE_REQUEST_TIMEOUT:-10.0}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
+
+networks:
+  default:

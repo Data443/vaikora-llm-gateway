@@ -1,0 +1,232 @@
+"""
+Public API routes for the Data443 LLM Gateway.
+"""
+
+from typing import Dict, Any, Optional
+
+from fastapi import APIRouter, Request, Response, HTTPException, status, Query
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse, PlainTextResponse
+from loguru import logger
+
+from gateway.core.config import settings
+from gateway.core.types import Decision
+from gateway.api.auth import require_admin_auth
+from gateway.integrations.audit import audit_logger
+from gateway.integrations.telemetry import telemetry_metrics
+from gateway.services.agent_registry import agent_registry
+
+
+public_router = APIRouter()
+
+
+@public_router.get("/health")
+async def health_check(request: Request) -> Dict[str, Any]:
+    """
+    Health check endpoint.
+
+    Returns gateway status and component health.
+    """
+    proxy_handler = request.app.state.proxy_handler
+    return await proxy_handler.health_check()
+
+
+@public_router.get("/ready")
+async def readiness_check(request: Request) -> JSONResponse:
+    """
+    Readiness probe endpoint.
+
+    Returns HTTP 200 only when the gateway is ready to serve traffic.
+    Returns HTTP 503 with component details when dependencies are degraded.
+    """
+    proxy_handler = request.app.state.proxy_handler
+    payload = await proxy_handler.readiness_check()
+    return JSONResponse(
+        status_code=status.HTTP_200_OK if payload.get("ready") else status.HTTP_503_SERVICE_UNAVAILABLE,
+        content=jsonable_encoder(payload),
+    )
+
+
+@public_router.get("/")
+async def root() -> Dict[str, Any]:
+    """Root endpoint with gateway information."""
+    return {
+        "name": "Data443 LLM Security Gateway",
+        "version": "1.0.0",
+        "status": "operational",
+        "endpoints": {
+            "health": "/health",
+            "ready": "/ready",
+            "proxy": "/{path}",
+            "agent_proxy": "/agents/{agent_id}/v1/chat/completions",
+            "audit": "/audit/log",
+            "events": "/audit/events",
+            "metrics": "/audit/metrics",
+            "metrics_prometheus": "/audit/metrics/prometheus",
+        },
+    }
+
+
+@public_router.get("/audit/log")
+async def get_audit_log(
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    decision: Optional[str] = None,
+    ip: Optional[str] = None,
+) -> JSONResponse:
+    """
+    Query audit log.
+
+    Query parameters:
+    - limit: Number of entries to return (default: 100)
+    - offset: Offset for pagination (default: 0)
+    - decision: Filter by decision type (ALLOW, BLOCK, CONSTRAIN)
+    - ip: Filter by IP address
+    """
+    await require_admin_auth(request)
+
+    decision_filter = None
+    if decision:
+        try:
+            decision_filter = Decision[decision.upper()]
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid decision value: {decision}",
+            ) from exc
+    logs = await audit_logger.query_audit_log(
+        limit=limit,
+        offset=offset,
+        decision=decision_filter,
+        ip_address=ip,
+    )
+
+    return JSONResponse(content=jsonable_encoder({
+        "total": len(logs),
+        "limit": limit,
+        "offset": offset,
+        "logs": logs,
+    }))
+
+
+@public_router.get("/audit/events")
+async def get_gateway_events(
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    decision: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> JSONResponse:
+    """
+    Query structured gateway event stream.
+
+    Query parameters:
+    - limit: Number of entries to return (default: 100)
+    - offset: Offset for pagination (default: 0)
+    - decision: Filter by decision value
+    - request_id: Filter by request id
+    """
+    await require_admin_auth(request)
+
+    events = await audit_logger.query_gateway_events(
+        limit=limit,
+        offset=offset,
+        decision=decision,
+        request_id=request_id,
+    )
+    return JSONResponse(content=jsonable_encoder({
+        "total": len(events),
+        "limit": limit,
+        "offset": offset,
+        "events": events,
+    }))
+
+
+@public_router.get("/audit/metrics")
+async def get_gateway_metrics(request: Request) -> JSONResponse:
+    """Get process-local telemetry counters and latency aggregates."""
+    await require_admin_auth(request)
+    return JSONResponse(content=jsonable_encoder({
+        "success": True,
+        "message": "Gateway telemetry metrics",
+        "metrics": telemetry_metrics.snapshot(),
+    }))
+
+
+@public_router.get("/audit/metrics/prometheus")
+async def get_gateway_metrics_prometheus(request: Request) -> PlainTextResponse:
+    """Get gateway telemetry in Prometheus text exposition format."""
+    await require_admin_auth(request)
+    return PlainTextResponse(
+        content=telemetry_metrics.to_prometheus(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
+@public_router.post("/agents/{agent_id}/v1/chat/completions")
+async def proxy_agent_chat_completion(request: Request, agent_id: str) -> Response:
+    """Proxy agent chat completions with managed-agent context."""
+    agent = await agent_registry.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_id}' is not registered",
+        )
+    if str(agent.get("status", "")).upper() != "ACTIVE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Agent '{agent_id}' is not active",
+        )
+
+    if settings.a2a_interaction_enforcement_enabled:
+        interaction_id = request.headers.get("x-a2a-interaction-id", "").strip()
+        if not interaction_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required header: x-a2a-interaction-id",
+            )
+        interaction = await agent_registry.get_interaction(interaction_id)
+        if not interaction:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"A2A interaction '{interaction_id}' not found",
+            )
+        if str(interaction.get("review_status", "")).upper() != "APPROVED":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"A2A interaction '{interaction_id}' is not APPROVED (status: {interaction.get('review_status')})",
+            )
+
+    request.state.agent_context = {
+        "agent_id": agent.get("agent_id"),
+        "agent_type": agent.get("agent_type"),
+        "agent_wrapped": bool(agent.get("wrapped", False)),
+    }
+
+    proxy_handler = request.app.state.proxy_handler
+    return await proxy_handler.handle_request(request)
+
+
+@public_router.api_route(
+    "/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+)
+async def proxy_request(request: Request, path: str) -> Response:
+    """
+    Proxy all requests to target LLM endpoint.
+
+    This is the main entry point for all LLM API requests.
+    """
+    proxy_handler = request.app.state.proxy_handler
+
+    try:
+        return await proxy_handler.handle_request(request)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error handling request: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )

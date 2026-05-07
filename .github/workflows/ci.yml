@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Dependency consistency check
+        run: |
+          pip check
+
+      - name: Dependency vulnerability scan
+        run: |
+          pip install pip-audit==2.7.3
+          pip-audit -r requirements.txt --progress-spinner off
+
+      - name: Ensure Docker Compose is available
+        run: |
+          set -euxo pipefail
+          if docker compose version >/dev/null 2>&1; then
+            docker compose version
+            exit 0
+          fi
+          if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose --version
+            exit 0
+          fi
+
+          mkdir -p "$HOME/.docker/cli-plugins"
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64|amd64) bin_arch="x86_64" ;;
+            aarch64|arm64) bin_arch="aarch64" ;;
+            *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;
+          esac
+
+          curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-${bin_arch}" -o "$HOME/.docker/cli-plugins/docker-compose"
+          chmod +x "$HOME/.docker/cli-plugins/docker-compose"
+          docker compose version
+
+      - name: Start gateway stack
+        run: |
+          set -euxo pipefail
+          export A2A_INTERACTION_ENFORCEMENT_ENABLED=false
+
+          compose() {
+            if docker compose version >/dev/null 2>&1; then
+              docker compose "$@"
+            else
+              docker-compose "$@"
+            fi
+          }
+
+          compose up -d --build
+
+          ready=0
+          for i in {1..45}; do
+            cid="$(compose ps -q gateway || true)"
+            if [ -n "$cid" ]; then
+              state="$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo unknown)"
+              restarts="$(docker inspect -f '{{.RestartCount}}' "$cid" 2>/dev/null || echo 0)"
+              if [ "$state" != "running" ] || [ "$restarts" -gt 2 ]; then
+                echo "Gateway container unhealthy (state=$state restarts=$restarts)."
+                compose ps || true
+                compose logs gateway --tail=200 || true
+                compose logs postgres --tail=120 || true
+                compose logs redis --tail=120 || true
+                exit 1
+              fi
+            fi
+
+            if curl -fsS http://localhost:9000/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+
+          compose ps
+
+          if [ "$ready" -ne 1 ]; then
+            echo "Gateway failed to become healthy in time. Printing logs..."
+            compose logs gateway --tail=200 || true
+            compose logs postgres --tail=120 || true
+            compose logs redis --tail=120 || true
+            exit 1
+          fi
+
+          curl -fsS http://localhost:9000/health
+          curl -fsS http://localhost:9000/ready
+
+      - name: Run unit tests
+        env:
+          GATEWAY_BASE_URL: http://localhost:9000
+          LLM_API_KEY: ""
+          OPENAI_API_KEY: ""
+        run: |
+          python -m pytest -q --import-mode=importlib tests/py -o asyncio_default_fixture_loop_scope=function
+
+      - name: Compile check
+        run: |
+          python -m compileall -q gateway
+
+      - name: Build Docker image
+        run: |
+          docker build -t data443-llm-gateway:ci .
+
+      - name: Install Helm
+        run: |
+          set -euxo pipefail
+          if command -v helm >/dev/null 2>&1; then
+            helm version
+            exit 0
+          fi
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Helm lint and template checks
+        run: |
+          set -euxo pipefail
+          helm lint ./helm/data443-gateway
+          helm template data443-gw ./helm/data443-gateway > /tmp/data443-gateway-rendered.yaml
+          test -s /tmp/data443-gateway-rendered.yaml
+
+      - name: Teardown gateway stack
+        if: always()
+        run: |
+          if docker compose version >/dev/null 2>&1; then
+            docker compose down -v
+          elif command -v docker-compose >/dev/null 2>&1; then
+            docker-compose down -v
+          fi

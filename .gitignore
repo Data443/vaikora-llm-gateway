@@ -1,0 +1,27 @@
+.env
+.env.*
+!.env.example
+
+docker-compose.override.yml
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+.venv/
+venv/
+env/
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+
+
+# Local Vaikora clone used for integration research; not part of this gateway repo.
+vaikora-main/

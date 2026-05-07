@@ -1,0 +1,33 @@
+# Data443 LLM Gateway - Production Compose Overlay
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# This overlay removes direct DB/Redis host exposure and binds gateway to loopback.
+
+services:
+  redis:
+    ports: []
+
+  postgres:
+    ports: []
+
+  gateway:
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      STRICT_STARTUP_VALIDATION: ${STRICT_STARTUP_VALIDATION:-true}
+      ADMIN_AUTH_ENABLED: ${ADMIN_AUTH_ENABLED:-true}
+      ADMIN_AUTH_MODE: ${ADMIN_AUTH_MODE:-api_key}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_STORAGE: ${RATE_LIMIT_STORAGE:-redis}
+      AUDIT_PURGE_ENABLED: ${AUDIT_PURGE_ENABLED:-true}
+      DB_MIGRATIONS_ENABLED: ${DB_MIGRATIONS_ENABLED:-true}
+      DB_DDL_BOOTSTRAP_FALLBACK: ${DB_DDL_BOOTSTRAP_FALLBACK:-false}
+      CYREN_FAIL_CLOSED: ${CYREN_FAIL_CLOSED:-true}
+      PROXY_API_KEY_ENABLED: ${PROXY_API_KEY_ENABLED:-true}
+      # Async HITL continuation signing (set in VPS .env; inherits other CONTROL_PLANE_* from base compose)
+      CONTROL_PLANE_HITL_CONTINUATION_SECRET: ${CONTROL_PLANE_HITL_CONTINUATION_SECRET:-}
+      CONTROL_PLANE_HITL_CONTINUATION_TTL_SECONDS: ${CONTROL_PLANE_HITL_CONTINUATION_TTL_SECONDS:-3600}
+      A2A_INTERACTION_ENFORCEMENT_ENABLED: ${A2A_INTERACTION_ENFORCEMENT_ENABLED:-true}

@@ -1,0 +1,15 @@
+apiVersion: v2
+name: data443-gateway
+description: Data443 LLM Security Gateway — reverse proxy for LLM endpoints with content filtering, threat intelligence, HITL approvals, and Vaikora control plane integration
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - llm
+  - security
+  - proxy
+  - ai-governance
+  - data443
+maintainers:
+  - name: Data443
+    url: https://github.com/Data443/data443-llm-gateway

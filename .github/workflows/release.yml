@@ -1,0 +1,179 @@
+name: Release
+
+# Publish container images to GHCR with semantic versioning on main,
+# plus tag-based and manual releases (aligned with Helm default image).
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: "Push image to GHCR"
+        required: true
+        default: true
+        type: boolean
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  security-events: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: true
+
+      - name: Calculate semantic version (main branch pushes)
+        id: calculate-version
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: bitshifted/git-auto-semver@v2
+        with:
+          create_tag: true
+          initial_version: 0.1.0
+
+      - name: Set release variables
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE_REPO="$(echo "ghcr.io/${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
+          SHA_TAG="sha-${GITHUB_SHA}"
+
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+          elif [[ "${GITHUB_REF:-}" == "refs/heads/main" ]] && [[ "${{ github.event_name }}" == "push" ]]; then
+            VER="${{ steps.calculate-version.outputs.version-string }}"
+            if [[ -z "${VER}" ]]; then
+              echo "Semver output missing; ensure calculate-version step ran on main."
+              exit 1
+            fi
+            RELEASE_TAG="v${VER}"
+          else
+            RELEASE_TAG="manual-${GITHUB_SHA::7}"
+          fi
+
+          SHOULD_PUSH="false"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            SHOULD_PUSH="true"
+          elif [[ "${GITHUB_REF:-}" == "refs/heads/main" && "${{ github.event_name }}" == "push" ]]; then
+            SHOULD_PUSH="true"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.push_image }}" == "true" ]]; then
+            SHOULD_PUSH="true"
+          fi
+
+          echo "image_repo=${IMAGE_REPO}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "should_push=${SHOULD_PUSH}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run fast unit tests
+        run: |
+          python -m pytest -q \
+            tests/py/test_admin_auth_hardening.py \
+            tests/py/test_rate_limit_and_semantic.py \
+            tests/py/test_audit_retention_purge.py \
+            tests/py/test_constrain_transform.py \
+            tests/py/test_startup_validation_and_readiness.py
+
+      - name: Install Helm
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v helm >/dev/null 2>&1; then
+            helm version
+            exit 0
+          fi
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Helm lint and template validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm lint ./helm/data443-gateway
+          helm template data443-gw ./helm/data443-gateway > /tmp/data443-gateway-rendered.yaml
+          test -s /tmp/data443-gateway-rendered.yaml
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: steps.vars.outputs.should_push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            -t "${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.release_tag }}" \
+            -t "${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.sha_tag }}" \
+            -t "${{ steps.vars.outputs.image_repo }}:latest" \
+            .
+
+      # Report-only: base OS + dependency HIGH findings are common and would block every release.
+      # Tighten later (e.g. SARIF upload to GitHub Security, or exit-code 1 once image hardening targets are met).
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.release_tag }}
+          format: "table"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH,CRITICAL"
+          exit-code: "0"
+
+      - name: Push image tags
+        if: steps.vars.outputs.should_push == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.release_tag }}"
+          docker push "${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.sha_tag }}"
+          docker push "${{ steps.vars.outputs.image_repo }}:latest"
+
+      - name: Install Cosign
+        if: steps.vars.outputs.should_push == 'true'
+        uses: sigstore/cosign-installer@v3.6.0
+
+      - name: Sign release images (keyless)
+        if: steps.vars.outputs.should_push == 'true'
+        continue-on-error: true
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.release_tag }}"
+          cosign sign --yes "${{ steps.vars.outputs.image_repo }}:${{ steps.vars.outputs.sha_tag }}"
+          cosign sign --yes "${{ steps.vars.outputs.image_repo }}:latest"
