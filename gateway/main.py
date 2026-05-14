@@ -22,6 +22,7 @@ from starlette.responses import Response as StarletteResponse
 from gateway.api.admin import get_admin_router
 from gateway.api.agent_control import agent_control_router
 from gateway.api.public import public_router
+from gateway.api.evaluation import evaluation_router
 from gateway.core.config import settings
 from gateway.core.logging import configure_logging
 from gateway.core.startup_validation import validate_startup_settings
@@ -179,6 +180,7 @@ admin_router = get_admin_router()
 app.include_router(admin_router)
 app.include_router(agent_control_router)
 app.include_router(public_router)
+app.include_router(evaluation_router)
 
 
 @app.exception_handler(HTTPException)
