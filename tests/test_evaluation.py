@@ -142,11 +142,15 @@ def test_modules_check_rejects_unknown_module(client: TestClient) -> None:
 
 def test_get_policies_returns_combined_config(client: TestClient) -> None:
     with patch("gateway.api.evaluation.policy_store") as mock_store:
-        mock_store.list_policies.return_value = {
-            "pii_detection": {"enabled": True, "action_on_detect": "BLOCK"},
-        }
+        mock_store.list_policies.return_value = [
+            {
+                "name": "pii_detection",
+                "enabled": True,
+                "config": {"enabled": True, "action_on_detect": "BLOCK"},
+            }
+        ]
         mock_store.get_entitlements.return_value = {"providers": {"openai": True}}
-        mock_store.get_version.return_value = 7
+        mock_store.get_entitlements_version = AsyncMock(return_value=7)
         response = client.get("/v1/policies")
 
     assert response.status_code == 200
@@ -156,13 +160,21 @@ def test_get_policies_returns_combined_config(client: TestClient) -> None:
 
 
 def test_audit_write_requires_admin(client: TestClient) -> None:
-    response = client.post(
-        "/v1/audit",
-        json={
-            "action": "rotate api key",
-            "decision": "ALLOW",
-            "receipt_id": "sha256:abc",
-        },
-    )
-    # require_admin_auth should reject with 401 or 403 when no auth header is present.
-    assert response.status_code in (401, 403, 422)
+    # Explicitly enable admin auth so require_admin_auth rejects unauthenticated calls.
+    # Pre-fix this test relied on a parameter-binding bug (require_admin_auth bound
+    # as default value instead of Depends()), which made `_` a required query param
+    # and returned 422. Now that Depends() is wired correctly, the test needs to
+    # enable admin auth in settings to exercise the rejection path.
+    from gateway.core.config import settings as gw_settings
+    with patch.object(gw_settings, "admin_auth_enabled", True), \
+         patch.object(gw_settings, "admin_auth_mode", "api_key"), \
+         patch.object(gw_settings, "admin_api_key", "valid_admin_key_for_test"):
+        response = client.post(
+            "/v1/audit",
+            json={
+                "action": "rotate api key",
+                "decision": "ALLOW",
+                "receipt_id": "sha256:abc",
+            },
+        )
+    assert response.status_code in (401, 403)

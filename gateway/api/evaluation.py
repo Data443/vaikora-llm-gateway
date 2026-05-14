@@ -37,7 +37,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -321,9 +321,10 @@ async def check_module(payload: ModuleCheckRequest, request: Request) -> Enforce
 @evaluation_router.get("/policies", response_model=PolicyConfigPayload)
 async def get_policies() -> PolicyConfigPayload:
     """Return the active policy + entitlement configuration."""
-    policies = policy_store.list_policies()
+    policies_list = policy_store.list_policies()
     entitlements = policy_store.get_entitlements()
-    version = policy_store.get_version()
+    version = (await policy_store.get_entitlements_version()) or 0
+    policies = {p["name"]: p.get("config", {}) for p in policies_list}
     return PolicyConfigPayload(
         policies=policies,
         entitlements=entitlements,
@@ -335,7 +336,7 @@ async def get_policies() -> PolicyConfigPayload:
 async def write_audit(
     payload: AuditWriteRequest,
     request: Request,
-    _: None = require_admin_auth,
+    _: None = Depends(require_admin_auth),
 ) -> Dict[str, Any]:
     """Append an entry to the gateway audit log.
 

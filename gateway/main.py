@@ -176,11 +176,14 @@ app.add_middleware(RequestBodyLimitMiddleware)
 app.add_middleware(RateLimitMiddleware)
 
 # Include API routers
+# IMPORTANT: evaluation_router must be registered BEFORE public_router because
+# public_router has a `/{path:path}` catch-all that proxies to upstream LLMs.
+# That catch-all otherwise swallows /v1/evaluate, /v1/modules/check, /v1/policies, /v1/audit.
 admin_router = get_admin_router()
 app.include_router(admin_router)
 app.include_router(agent_control_router)
-app.include_router(public_router)
 app.include_router(evaluation_router)
+app.include_router(public_router)
 
 
 @app.exception_handler(HTTPException)
