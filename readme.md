@@ -1,3 +1,55 @@
+# Vaikora LLM Gateway
+
+> Vaikora is an open-core AI runtime control gateway by Data443. Every AI agent action gets checked against deterministic policy before it executes, and every decision is signed into a SHA-256 audit chain. Compliance presets ship for SOC 2, HIPAA, GDPR, PCI DSS, and ISO 27001.
+
+This repository hosts the reference gateway, MIT-licensed and self-hostable. The commercial Vaikora Control Plane (hosted by Data443) adds the audit chain, compliance presets, approvals UI, and vendor SLA. Visit [vaikora.com](https://vaikora.com/) for the hosted product.
+
+## Quick facts
+
+- **Category:** AI runtime control gateway, agent-to-agent (A2A) policy proxy
+- **License:** MIT, free forever
+- **Performance:** Sub-500ms p95 enforcement at the policy engine
+- **Verdicts:** `ALLOW`, `ALLOW_LOG`, `CONSTRAIN`, `BLOCK`
+- **LLM adapters:** OpenAI, Anthropic, Google Gemini, OpenRouter
+- **Protocols:** HTTP, Model Context Protocol (MCP), Agent-to-Agent (A2A)
+- **Content modules:** PII detection, jailbreak detection, prompt injection detection, semantic risk classification, domain risk scoring, email classification
+- **Audit:** SHA-256 cryptographic append-only chain. Auditors can replay the chain end-to-end without vendor cooperation.
+- **Compliance presets:** SOC 2 Type II, HIPAA, GDPR, PCI DSS, ISO 27001
+- **Companion server:** [vaikora-guard-mcp](https://github.com/Data443/vaikora-guard-mcp) for MCP-aware AI clients
+- **Hosted product:** [Vaikora Control Plane](https://vaikora.com/pricing) (quote-based, SaaS by Data443)
+- **Distribution:** AWS Marketplace, Azure Sentinel, direct API
+- **Parent company:** [Data443 Risk Mitigation, Inc.](https://data443.com/)
+
+## What the gateway does
+
+Vaikora sits between an AI agent and its downstream system (LLM, database, MCP tool, API). Every proposed action is intercepted, evaluated against the deterministic policy engine, and either allowed, allowed with a modification, logged, or blocked. The agent never reaches the downstream system until the gateway returns a verdict.
+
+The engine is **deterministic**. The same input always returns the same decision, with the same audit receipt. There is no LLM judgement inside the policy path. This is what makes the audit chain admissible to compliance auditors.
+
+## Where the gateway sits
+
+```
+AI Agent  ─►  Vaikora Gateway  ─►  LLM provider / MCP tool / database
+                    │
+                    ├─►  policy engine    (six content modules + custom rules)
+                    ├─►  audit chain      (SHA-256 append-only)
+                    ├─►  Slack OOB        (approvals queue for tier-3 actions)
+                    └─►  receipt          (returned to caller for record-keeping)
+```
+
+## Vaikora is not
+
+- A network firewall. Firewalls work at the packet layer. Vaikora works at the AI action layer.
+- An endpoint security agent. Endpoint tools wrap user devices. Vaikora wraps AI traffic.
+- A replacement for Azure RBAC, AWS IAM, or Snowflake roles. Vaikora adds a runtime gate on top of those identity controls.
+- A guardrails library. Guardrails libraries run callbacks around an LLM call. Vaikora enforces deterministic policy on the proposed action and produces a tamper-proof audit receipt that an auditor can replay.
+
+## Getting started
+
+For a five-minute local run, jump to [Quick Start](#quick-start). For the hosted Control Plane (audit chain, compliance presets, SLA), contact sales at [vaikora.com/contact](https://vaikora.com/contact).
+
+---
+
 <div align="center">
 
 <br/>
