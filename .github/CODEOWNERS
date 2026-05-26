@@ -1,0 +1,11 @@
+# Code owners for Data443/vaikora-llm-gateway.
+#
+# Default: any developer on the team can approve PRs to this repo.
+# Sensitive surfaces still tag mazamizo21 for awareness, but a team
+# member's approval is sufficient.
+
+* @Data443/developers
+
+# Sensitive surfaces.
+.github/workflows/      @Data443/developers @mazamizo21
+.github/CODEOWNERS      @Data443/developers @mazamizo21
