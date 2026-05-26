@@ -1,0 +1,8 @@
+# CODEOWNERS for Data443/vaikora-llm-gateway.
+#
+# Default: any developer on the team can approve.
+
+* @Data443/developers
+
+.github/workflows/      @mazamizo21 @Data443/developers
+.github/CODEOWNERS      @mazamizo21 @Data443/developers
