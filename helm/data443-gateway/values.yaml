@@ -9,6 +9,15 @@
 #   - gateway.controlPlane.hitlContinuationSecret (if control plane is enabled)
 # -----------------------------------------------------------------
 
+# When set, the gateway reads its sensitive values from this existing
+# Kubernetes Secret (e.g. one synced from 1Password via ESO) instead of the
+# chart-managed Secret rendered from the inline values below. The Secret must
+# hold the same keys the chart expects: POSTGRES_PASSWORD, REDIS_PASSWORD,
+# PROXY_API_KEY, ADMIN_API_KEY, JWT_SECRET, CYREN_API_KEY, LLM_API_KEY,
+# CONTROL_PLANE_API_KEY, CONTROL_PLANE_HITL_CONTINUATION_SECRET. Leave empty to
+# keep the chart-managed Secret.
+existingSecret: ""
+
 # -- Number of gateway replicas
 replicaCount: 1
 

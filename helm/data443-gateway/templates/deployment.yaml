@@ -83,7 +83,7 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "data443-gateway.fullname" . }}
+                  name: {{ include "data443-gateway.secretName" . }}
                   key: POSTGRES_PASSWORD
             - name: DB_MIGRATIONS_ENABLED
               value: "true"
@@ -98,7 +98,7 @@ spec:
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "data443-gateway.fullname" . }}
+                  name: {{ include "data443-gateway.secretName" . }}
                   key: REDIS_PASSWORD
 
             # ---- Audit ----
@@ -117,7 +117,7 @@ spec:
             - name: PROXY_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "data443-gateway.fullname" . }}
+                  name: {{ include "data443-gateway.secretName" . }}
                   key: PROXY_API_KEY
 
             # ---- Admin Auth ----
@@ -128,7 +128,7 @@ spec:
             - name: ADMIN_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "data443-gateway.fullname" . }}
+                  name: {{ include "data443-gateway.secretName" . }}
                   key: ADMIN_API_KEY
             {{- if .Values.gateway.admin.allowedIps }}
             - name: ADMIN_ALLOWED_IPS
@@ -141,7 +141,7 @@ spec:
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "data443-gateway.fullname" . }}
+                  name: {{ include "data443-gateway.secretName" . }}
                   key: JWT_SECRET
             - name: JWT_ISSUER
               value: {{ .Values.gateway.jwt.issuer | quote }}
@@ -156,7 +156,7 @@ spec:
             - name: CYREN_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "data443-gateway.fullname" . }}
+                  name: {{ include "data443-gateway.secretName" . }}
                   key: CYREN_API_KEY
             - name: CYREN_TIMEOUT
               value: {{ .Values.gateway.cyren.timeout | quote }}
@@ -169,7 +169,7 @@ spec:
             - name: LLM_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "data443-gateway.fullname" . }}
+                  name: {{ include "data443-gateway.secretName" . }}
                   key: LLM_API_KEY
 
             # ---- Policy Thresholds ----
@@ -201,7 +201,7 @@ spec:
             - name: CONTROL_PLANE_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "data443-gateway.fullname" . }}
+                  name: {{ include "data443-gateway.secretName" . }}
                   key: CONTROL_PLANE_API_KEY
             - name: CONTROL_PLANE_POLICY_SYNC_INTERVAL
               value: {{ .Values.gateway.controlPlane.policySyncIntervalSeconds | quote }}
@@ -216,7 +216,7 @@ spec:
             - name: CONTROL_PLANE_HITL_CONTINUATION_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "data443-gateway.fullname" . }}
+                  name: {{ include "data443-gateway.secretName" . }}
                   key: CONTROL_PLANE_HITL_CONTINUATION_SECRET
             - name: CONTROL_PLANE_HITL_CONTINUATION_TTL_SECONDS
               value: {{ .Values.gateway.controlPlane.hitlContinuationTtlSeconds | quote }}

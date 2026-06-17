@@ -22,6 +22,15 @@ Create a default fully qualified app name.
 {{- end }}
 
 {{/*
+Name of the Secret holding the gateway's sensitive values. Uses
+.Values.existingSecret when set (e.g. one synced from 1Password via ESO),
+otherwise the chart-managed Secret.
+*/}}
+{{- define "data443-gateway.secretName" -}}
+{{- .Values.existingSecret | default (include "data443-gateway.fullname" .) -}}
+{{- end }}
+
+{{/*
 Chart label.
 */}}
 {{- define "data443-gateway.chart" -}}
