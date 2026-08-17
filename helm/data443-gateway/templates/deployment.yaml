@@ -164,8 +164,12 @@ spec:
               value: {{ .Values.gateway.cyren.failClosed | quote }}
 
             # ---- LLM Provider ----
+            - name: LLM_PROVIDER
+              value: {{ .Values.gateway.llm.provider | quote }}
             - name: LLM_ENDPOINT
               value: {{ .Values.gateway.llm.endpoint | quote }}
+            - name: OPENAI_PREFER_CONFIGURED_KEY
+              value: {{ .Values.gateway.llm.preferConfiguredKey | quote }}
             - name: LLM_API_KEY
               valueFrom:
                 secretKeyRef:

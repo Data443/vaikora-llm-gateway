@@ -46,6 +46,7 @@ class ProviderRouter:
             "openai": OpenAIProviderAdapter(
                 endpoint=settings.openai_endpoint or settings.llm_endpoint,
                 api_key=settings.openai_api_key or settings.llm_api_key,
+                prefer_configured_key=settings.openai_prefer_configured_key,
             ),
             "anthropic": AnthropicProviderAdapter(
                 endpoint=settings.anthropic_endpoint,

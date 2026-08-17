@@ -1655,6 +1655,34 @@ def test_openai_and_openrouter_passthrough() -> None:
     )
     assert prepared_openrouter.url.endswith("/chat/completions")
     assert prepared_openrouter.headers["authorization"] == "Bearer openrouter-key"
+
+
+def test_openai_auth_precedence_byok_vs_self_hosted() -> None:
+    body = {"model": "m", "messages": [{"role": "user", "content": "Hi"}]}
+    caller = {"authorization": "Bearer caller-supplied"}
+
+    # Default: BYOK pass-through -- the caller's key goes upstream.
+    byok = OpenAIProviderAdapter(endpoint="https://api.openai.com", api_key="configured")
+    assert byok.prepare_chat_completion(request_body=body, incoming_headers=caller).headers[
+        "authorization"
+    ] == "Bearer caller-supplied"
+
+    # Self-hosted: the configured key wins so a caller's gateway credential is not leaked
+    # upstream (and does not 401 against a backend that never issued it).
+    selfhosted = OpenAIProviderAdapter(
+        endpoint="http://10.40.5.106:8080",
+        api_key="configured",
+        prefer_configured_key=True,
+    )
+    assert selfhosted.prepare_chat_completion(request_body=body, incoming_headers=caller).headers[
+        "authorization"
+    ] == "Bearer configured"
+
+    # prefer_configured_key with no configured key must not wipe the caller's header.
+    empty = OpenAIProviderAdapter(endpoint="http://x", api_key="", prefer_configured_key=True)
+    assert empty.prepare_chat_completion(request_body=body, incoming_headers=caller).headers[
+        "authorization"
+    ] == "Bearer caller-supplied"
 # ===== END tests/test_phase2_provider_adapters.py =====
 
 # ===== BEGIN tests/test_phase2_security_hardening.py =====
