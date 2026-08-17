@@ -31,7 +31,17 @@ jobs:
       - name: Dependency vulnerability scan
         run: |
           pip install pip-audit==2.7.3
-          pip-audit -r requirements.txt --progress-spinner off
+          # CVE-2024-23342 / PYSEC-2026-1325 -- Minerva timing attack on P-256 in
+          # python-ecdsa, reached transitively via python-jose[cryptography]. Affects every
+          # released version (0.6 through 0.19.2) and there is NO planned fix: the
+          # python-ecdsa maintainers treat side-channel attacks as out of scope. It is
+          # exploitable only through signing (sign_digest / keygen / ECDH); signature
+          # VERIFICATION is unaffected, and verification is all this gateway does with JWTs.
+          # Revisit if we ever sign with ecdsa, or drop python-jose for PyJWT to remove the
+          # dependency outright.
+          pip-audit -r requirements.txt --progress-spinner off \
+            --ignore-vuln PYSEC-2026-1325 \
+            --ignore-vuln GHSA-wj6h-64fc-37mp
 
       - name: Ensure Docker Compose is available
         run: |
