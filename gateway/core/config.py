@@ -205,12 +205,24 @@ class Settings(BaseSettings):
 
     # Provider-specific settings
     openai_endpoint: str = Field(
-        default="https://api.openai.com",
-        description="OpenAI API base endpoint"
+        default="",
+        description=(
+            "OpenAI API base endpoint. Empty falls back to llm_endpoint (which defaults to "
+            "https://api.openai.com), so LLM_ENDPOINT works as documented; a non-empty value "
+            "here overrides it for the openai provider only."
+        ),
     )
     openai_api_key: str = Field(
         default="",
         description="OpenAI API key (if explicit provider routing is used)"
+    )
+    openai_prefer_configured_key: bool = Field(
+        default=False,
+        description=(
+            "Send the configured OpenAI key upstream instead of forwarding the caller's "
+            "Authorization header. Enable when openai_endpoint is a self-hosted "
+            "OpenAI-compatible backend (llama.cpp, vLLM) whose key is infrastructure, not BYOK."
+        ),
     )
     anthropic_endpoint: str = Field(
         default="https://api.anthropic.com",

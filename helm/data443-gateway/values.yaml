@@ -22,7 +22,8 @@ existingSecret: ""
 replicaCount: 1
 
 image:
-  repository: ghcr.io/data443/data443-llm-gateway
+  # Must match what .github/workflows/release.yml publishes (ghcr.io/${GITHUB_REPOSITORY}).
+  repository: ghcr.io/data443/vaikora-llm-gateway
   tag: "latest"
   pullPolicy: IfNotPresent
 
@@ -89,6 +90,11 @@ gateway:
     provider: "openai"
     endpoint: "https://api.openai.com"
     apiKey: ""
+    # Send the configured LLM_API_KEY upstream instead of forwarding the caller's
+    # Authorization header. Leave false for BYOK against a public provider. Set true when
+    # `endpoint` is a self-hosted OpenAI-compatible backend (llama.cpp, vLLM) whose key is
+    # infrastructure -- otherwise a caller's gateway credential is forwarded and 401s.
+    preferConfiguredKey: false
 
   # Audit / retention
   audit:
