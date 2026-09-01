@@ -114,6 +114,8 @@ spec:
             # ---- Proxy Auth ----
             - name: PROXY_API_KEY_ENABLED
               value: {{ .Values.gateway.proxyApiKeyEnabled | quote }}
+            - name: CONTENT_FILTER_MONITOR_ONLY
+              value: {{ .Values.gateway.contentFilterMonitorOnly | quote }}
             - name: PROXY_API_KEY
               valueFrom:
                 secretKeyRef:

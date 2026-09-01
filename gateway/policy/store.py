@@ -95,6 +95,16 @@ class PolicyStore:
 
     def __init__(self) -> None:
         self._policies: Dict[str, Dict[str, Any]] = deepcopy(DEFAULT_POLICIES)
+        # Opt-in observe-only posture. The seed default above stays BLOCK (secure by default); when
+        # CONTENT_FILTER_MONITOR_ONLY is set, force every detection module to ALLOW (detect + log, never
+        # block). This lets a deployment whose traffic is already governed upstream — e.g. the instance
+        # serving Data443's model to Convaa, which runs Vaikora at its own app layer — act as an
+        # observing proxy rather than a second enforcing layer, without weakening the product default.
+        from gateway.core.config import settings  # local import avoids a config<->store import cycle
+        if settings.content_filter_monitor_only:
+            for _policy in self._policies.values():
+                if "action_on_detect" in _policy:
+                    _policy["action_on_detect"] = "ALLOW"
         self._entitlements: Dict[str, Any] = deepcopy(DEFAULT_ENTITLEMENTS)
         self._audit_logger: Optional[AuditLogger] = None
         self._initialized = False

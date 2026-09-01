@@ -323,6 +323,15 @@ class Settings(BaseSettings):
         default="",
         description="Static API key that proxy callers must provide in x-api-key header",
     )
+    content_filter_monitor_only: bool = Field(
+        default=False,
+        description=(
+            "When true, every content-detection module runs in observe-only mode: it still detects and "
+            "logs, but its action is forced to ALLOW instead of BLOCK. Opt-in per deployment; the seed "
+            "policy default stays BLOCK (secure by default). Use where traffic is already governed "
+            "upstream and the gateway should observe, not enforce."
+        ),
+    )
 
     # Agent governance hardening
     agent_link_enforcement_enabled: bool = Field(
