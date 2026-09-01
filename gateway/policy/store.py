@@ -69,8 +69,12 @@ DEFAULT_ENTITLEMENTS: Dict[str, Any] = {
         "openrouter": False,
     },
     "limits": {
-        "max_input_chars": 32000,
-        "max_output_tokens": 4096,
+        # 0 disables the check: proxy_service enforces max_input_chars / max_output_tokens only when the
+        # value is a positive int. Data443 serves its own model (Qwen3.6 35B A3B, 262k-token context) and
+        # callers like Convaa send full-context turns, so the 32000-char / 4096-token caps (~3% of the
+        # model's window) are removed here — the model's own context window is the only limit.
+        "max_input_chars": 0,
+        "max_output_tokens": 0,
     },
 }
 
