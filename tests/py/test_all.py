@@ -1500,6 +1500,32 @@ async def test_default_policy_presence() -> None:
     assert pii_policy["action_on_detect"] == "BLOCK"
 
 
+def test_content_filter_monitor_only_forces_allow(monkeypatch) -> None:
+    # The seed default stays BLOCK; the opt-in CONTENT_FILTER_MONITOR_ONLY flag flips every detection
+    # module to ALLOW (detect + log, never block) when a new PolicyStore is constructed.
+    import gateway.core.config as config_mod
+
+    monkeypatch.setattr(config_mod.settings, "content_filter_monitor_only", True)
+    store = PolicyStore()
+    for name in (
+        "pii_detection",
+        "jailbreak_detection",
+        "injection_detection",
+        "semantic_detection",
+        "domain_risk_scoring",
+        "email_classification",
+    ):
+        assert store.get_policy(name)["action_on_detect"] == "ALLOW"
+
+
+def test_content_filter_monitor_only_default_off_keeps_block(monkeypatch) -> None:
+    import gateway.core.config as config_mod
+
+    monkeypatch.setattr(config_mod.settings, "content_filter_monitor_only", False)
+    store = PolicyStore()
+    assert store.get_policy("pii_detection")["action_on_detect"] == "BLOCK"
+
+
 @pytest.mark.asyncio
 async def test_policy_update_fallback_versioning() -> None:
     store = PolicyStore()

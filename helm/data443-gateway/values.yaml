@@ -62,6 +62,11 @@ gateway:
   # REQUIRED — set to a strong random value
   proxyApiKey: ""
 
+  # Observe-only content filtering: when true, every detection module detects + logs but never blocks
+  # (action forced to ALLOW). Opt-in; the app's seed policy default is BLOCK (secure by default). Use
+  # where traffic is already governed upstream and this gateway should observe, not enforce.
+  contentFilterMonitorOnly: false
+
   # Admin API hardening
   admin:
     authEnabled: true
