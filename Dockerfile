@@ -32,6 +32,9 @@ RUN groupadd --system app && useradd --system --gid app --create-home --home-dir
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV LOG_LEVEL=INFO
+# prometheus_client multiprocess mode: each worker writes its metric values here and
+# GET /metrics aggregates them. Emptied by the CMD below on every container start.
+ENV PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc
 
 # Drop root privileges for runtime
 USER app
@@ -43,5 +46,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import httpx; httpx.get('http://localhost:8000/health')" || exit 1
 
-# Run the application
-CMD ["uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application. Empty the metrics dir first (counters from a previous run of this
+# container must not be summed in), then exec so uvicorn stays PID 1 and gets signals.
+CMD ["sh", "-c", "mkdir -p \"$PROMETHEUS_MULTIPROC_DIR\" && find \"$PROMETHEUS_MULTIPROC_DIR\" -mindepth 1 -delete && exec uvicorn gateway.main:app --host 0.0.0.0 --port 8000"]

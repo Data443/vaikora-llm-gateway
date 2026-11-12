@@ -39,9 +39,16 @@ jobs:
           # VERIFICATION is unaffected, and verification is all this gateway does with JWTs.
           # Revisit if we ever sign with ecdsa, or drop python-jose for PyJWT to remove the
           # dependency outright.
+          #
+          # PYSEC-2026-4298 (python-jose <= 3.5.0, no fixed release): algorithm-confusion
+          # guard bypassed by DER-encoded public keys. Exploitable only when a verifier
+          # accepts asymmetric keys / algorithms. This gateway verifies HS256 only, with a
+          # symmetric secret and algorithms=["HS256"] pinned (gateway/services/jwt_auth.py),
+          # so a public key can never be substituted. Same exit as above: PyJWT.
           pip-audit -r requirements.txt --progress-spinner off \
             --ignore-vuln PYSEC-2026-1325 \
-            --ignore-vuln GHSA-wj6h-64fc-37mp
+            --ignore-vuln GHSA-wj6h-64fc-37mp \
+            --ignore-vuln PYSEC-2026-4298
 
       - name: Ensure Docker Compose is available
         run: |

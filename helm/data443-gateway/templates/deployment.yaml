@@ -58,6 +58,13 @@ spec:
               value: {{ .Values.gateway.trustProxyHeaders | quote }}
             - name: STRICT_STARTUP_VALIDATION
               value: {{ .Values.gateway.strictStartupValidation | quote }}
+            # prometheus_client multiprocess dir for GET /metrics (emptied by the image CMD)
+            - name: PROMETHEUS_MULTIPROC_DIR
+              value: /tmp/prometheus-multiproc
+            {{- with .Values.gateway.llmInfraClassMap }}
+            - name: LLM_INFRA_CLASS_MAP
+              value: {{ . | quote }}
+            {{- end }}
 
             # ---- Rate Limiting ----
             - name: RATE_LIMIT_ENABLED
@@ -250,6 +257,13 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: prometheus-multiproc
+              mountPath: /tmp/prometheus-multiproc
+      volumes:
+        - name: prometheus-multiproc
+          emptyDir:
+            sizeLimit: 64Mi
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

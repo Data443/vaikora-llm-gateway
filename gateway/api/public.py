@@ -12,6 +12,7 @@ from loguru import logger
 from gateway.core.config import settings
 from gateway.core.types import Decision
 from gateway.api.auth import require_admin_auth
+from gateway.integrations import llm_metrics
 from gateway.integrations.audit import audit_logger
 from gateway.integrations.telemetry import telemetry_metrics
 from gateway.services.agent_registry import agent_registry
@@ -47,6 +48,25 @@ async def readiness_check(request: Request) -> JSONResponse:
     )
 
 
+# Set by ingress controllers / reverse proxies / Cloudflare, never by an in-cluster scraper.
+_FORWARDED_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip", "cf-connecting-ip")
+
+
+@public_router.get("/metrics", include_in_schema=False)
+async def prometheus_metrics(request: Request) -> Response:
+    """LLM-execution metrics (shared Data443 contract) in Prometheus text format.
+
+    Unauthenticated by design for in-cluster scraping: it must never be routed by an
+    ingress (route only the inference API and /health publicly). As a second line of
+    defence, a request that came through a reverse proxy gets a 404. Declared before the
+    ``/{path:path}`` catch-all so it is served here and never proxied upstream.
+    """
+    if any(request.headers.get(header) for header in _FORWARDED_HEADERS):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+    body, content_type = llm_metrics.render_metrics()
+    return Response(content=body, media_type=content_type)
+
+
 @public_router.get("/")
 async def root() -> Dict[str, Any]:
     """Root endpoint with gateway information."""
@@ -63,6 +83,7 @@ async def root() -> Dict[str, Any]:
             "events": "/audit/events",
             "metrics": "/audit/metrics",
             "metrics_prometheus": "/audit/metrics/prometheus",
+            "llm_metrics": "/metrics",
         },
     }
 
@@ -167,6 +188,18 @@ async def get_gateway_metrics_prometheus(request: Request) -> PlainTextResponse:
 @public_router.post("/agents/{agent_id}/v1/chat/completions")
 async def proxy_agent_chat_completion(request: Request, agent_id: str) -> Response:
     """Proxy agent chat completions with managed-agent context."""
+    try:
+        await _authorize_managed_agent(request, agent_id)
+    except HTTPException:
+        llm_metrics.record_blocked("agent")
+        raise
+
+    proxy_handler = request.app.state.proxy_handler
+    return await proxy_handler.handle_request(request)
+
+
+async def _authorize_managed_agent(request: Request, agent_id: str) -> None:
+    """Validate the managed agent (and A2A interaction) and attach agent context."""
     agent = await agent_registry.get_agent(agent_id)
     if not agent:
         raise HTTPException(
@@ -203,9 +236,6 @@ async def proxy_agent_chat_completion(request: Request, agent_id: str) -> Respon
         "agent_type": agent.get("agent_type"),
         "agent_wrapped": bool(agent.get("wrapped", False)),
     }
-
-    proxy_handler = request.app.state.proxy_handler
-    return await proxy_handler.handle_request(request)
 
 
 @public_router.api_route(
