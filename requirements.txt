@@ -30,9 +30,9 @@ regex==2024.11.6
 prometheus_client==0.26.0
 
 # OpenTelemetry (optional hooks)
-opentelemetry-api==1.28.2
-opentelemetry-sdk==1.28.2
-opentelemetry-exporter-otlp-proto-http==1.28.2
+opentelemetry-api==1.45.1
+opentelemetry-sdk==1.45.1
+opentelemetry-exporter-otlp-proto-http==1.45.1
 
 # Testing (install with: pip install -r requirements.txt)
 # GHSA-6w46-j5rx-g56g fixed in pytest>=9.0.3
