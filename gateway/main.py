@@ -26,6 +26,7 @@ from gateway.api.evaluation import evaluation_router
 from gateway.core.config import settings
 from gateway.core.logging import configure_logging
 from gateway.core.startup_validation import validate_startup_settings
+from gateway.integrations import llm_metrics
 from gateway.integrations.audit import audit_logger
 from gateway.integrations.cache import cache
 from gateway.integrations.cyren_client import cyren_client
@@ -131,6 +132,7 @@ async def lifespan(app: FastAPI):
     await cache.disconnect()
     await audit_logger.disconnect()
     shutdown_otel()
+    llm_metrics.mark_worker_exit()
     logger.info("Shutdown complete")
 
 
@@ -204,6 +206,9 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 def main():
     """Run server."""
     logger.info(f"Starting Data443 LLM Gateway on {settings.host}:{settings.port}")
+    # Empty the prometheus multiprocess dir once, before any worker starts, so counters
+    # from a previous run are not summed in (no-op when PROMETHEUS_MULTIPROC_DIR is unset).
+    llm_metrics.prepare_multiproc_dir()
     uvicorn.run(
         "gateway.main:app",
         host=settings.host,

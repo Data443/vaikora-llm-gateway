@@ -48,6 +48,11 @@ gateway:
   trustProxyHeaders: true
   # Fail fast on insecure/invalid auth and control-plane startup config
   strictStartupValidation: true
+  # Optional LLM_INFRA_CLASS_MAP override for the infra_class label on /metrics
+  # (comma-separated host_suffix=class, class one of cpu_local|gpu_local|gpu_offprem|
+  # api_thirdparty|unknown). Built-in defaults already cover inference-01 (10.40.5.106),
+  # RunPod and the public provider APIs. Example: "gpu-01.data443.net=gpu_local"
+  llmInfraClassMap: ""
 
   # Rate limiting
   rateLimit:
@@ -227,6 +232,10 @@ service:
   type: ClusterIP
   port: 8000
 
+# The Service port is named "http": a ServiceMonitor scrapes `port: http, path: /metrics`.
+# /metrics is UNAUTHENTICATED (in-cluster scraping only). The default ingress path below
+# ("/" Prefix) would publish it along with /docs, /admin/* and /audit/*: when enabling the
+# ingress, list only the public paths (e.g. /v1/chat/completions Prefix + /health Exact).
 ingress:
   enabled: false
   className: ""

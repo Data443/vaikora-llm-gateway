@@ -28,6 +28,7 @@ from gateway.services.policy_service import PolicyEngine, PolicyDecision
 from gateway.integrations.audit import audit_logger
 from gateway.integrations.cache import cache
 from gateway.integrations.event_schema import build_gateway_event_attributes
+from gateway.integrations import llm_metrics
 from gateway.integrations.telemetry import telemetry_metrics
 from gateway.integrations.otel import start_span
 from gateway.services.jwt_auth import JWTAuth, get_current_user_from_request
@@ -85,6 +86,29 @@ class ProxyHandler:
         return normalized or path or ""
 
     async def handle_request(self, request: Request) -> Response:
+        """Handle a proxied request, counting it as blocked if it never reaches upstream.
+
+        Executions (upstream calls) are counted in ``_forward_request``; everything the
+        gateway refuses before that point (auth, entitlement, content filter, policy, HITL,
+        provider misconfiguration) lands in ``llm_gateway_blocked_total`` instead. Like
+        executions, only POSTs count (scanner GETs and /v1/models are not LLM requests), and
+        an unexpected exception is a gateway error, not a block, unless a refusal fired first.
+        """
+        request.state.llm_upstream_attempted = False
+        request.state.llm_block_reason = None
+        is_post = request.method.upper() == "POST"
+        try:
+            response = await self._handle_request(request)
+        except Exception:
+            block_reason = getattr(request.state, "llm_block_reason", None)
+            if is_post and block_reason and not getattr(request.state, "llm_upstream_attempted", False):
+                llm_metrics.record_blocked(block_reason)
+            raise
+        if is_post and not getattr(request.state, "llm_upstream_attempted", False):
+            llm_metrics.record_blocked(getattr(request.state, "llm_block_reason", None) or "other")
+        return response
+
+    async def _handle_request(self, request: Request) -> Response:
         """
         Handle incoming LLM API request.
 
@@ -418,6 +442,7 @@ class ProxyHandler:
         path = request.url.path
         query = request.url.query
         is_chat_completions = self._is_chat_completions_path(path)
+        execution: Optional[llm_metrics.LLMExecution] = None
 
         try:
             incoming_headers = dict(request.headers)
@@ -446,6 +471,21 @@ class ProxyHandler:
                 outbound_json = effective_request_body
                 outbound_params = {}
 
+            # From here on the request reaches the upstream model: count it as an execution
+            # (POST only, so passthrough GETs such as /v1/models are not LLM executions).
+            request.state.llm_upstream_attempted = True
+            if request.method.upper() == "POST":
+                execution = llm_metrics.LLMExecution(
+                    target_url=target_url,
+                    provider=provider_name,
+                    model=model_name,
+                    # Verified managed-agent context only (not the merged one, where a client
+                    # x-agent-id header overrides the agent id the route authorized).
+                    caller=llm_metrics.resolve_caller(
+                        request.headers, getattr(request.state, "agent_context", None)
+                    ),
+                )
+
             with start_span(
                 "gateway.proxy.upstream_call",
                 {
@@ -458,13 +498,20 @@ class ProxyHandler:
                 },
             ) as upstream_span:
                 client = await self._get_http_client()
-                upstream_response = await client.request(
-                    method=request.method,
-                    url=target_url,
-                    params=outbound_params or None,
-                    json=outbound_json,
-                    headers=outbound_headers,
-                )
+                try:
+                    upstream_response = await client.request(
+                        method=request.method,
+                        url=target_url,
+                        params=outbound_params or None,
+                        json=outbound_json,
+                        headers=outbound_headers,
+                    )
+                except BaseException as exc:
+                    if execution is not None:
+                        execution.mark_exception(exc)
+                    raise
+                if execution is not None:
+                    execution.mark_response(upstream_response.status_code)
                 upstream_span.set_attribute("http.status_code", upstream_response.status_code)
 
             response_time_ms = int((time.time() - start_time) * 1000)
@@ -486,6 +533,9 @@ class ProxyHandler:
                 except Exception:
                     raw_payload = {}
 
+                if execution is not None:
+                    execution.usage = llm_metrics.extract_token_usage(raw_payload)
+
                 if is_chat_completions:
                     normalized = self.provider_router.normalize_chat_completion(
                         provider_name=provider_name,
@@ -498,6 +548,8 @@ class ProxyHandler:
                     final_headers = {"content-type": "application/json"}
                 elif isinstance(raw_payload, dict):
                     response_body_for_filter = raw_payload
+            elif execution is not None and "text/event-stream" in content_type.lower():
+                execution.usage = llm_metrics.extract_sse_usage(upstream_response.content)
 
             # Response content filtering
             if response_body_for_filter is not None:
@@ -621,6 +673,9 @@ class ProxyHandler:
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Failed to reach provider endpoint",
             ) from exc
+        finally:
+            if execution is not None:
+                execution.finish()
 
     def _hitl_continuation_secret_bytes(self) -> Optional[bytes]:
         secret = (settings.control_plane_hitl_continuation_secret or "").strip()
@@ -1486,6 +1541,7 @@ class ProxyHandler:
         attributes: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Persist structured event row for analytics and forensic use."""
+        self._note_block_reason(request, decision, attributes)
         agent_context = self._extract_agent_context(request)
         merged_attributes = {
             **(attributes or {}),
@@ -1551,6 +1607,21 @@ class ProxyHandler:
                         "response_status": response_status,
                     },
                 })
+
+    @staticmethod
+    def _note_block_reason(
+        request: Request,
+        decision: str,
+        attributes: Optional[Dict[str, Any]],
+    ) -> None:
+        """Remember why the first refusing event fired, for llm_gateway_blocked_total."""
+        try:
+            if not llm_metrics.is_blocking_decision(decision):
+                return
+            if getattr(request.state, "llm_block_reason", None) is None:
+                request.state.llm_block_reason = llm_metrics.block_reason_for(decision, attributes)
+        except Exception:  # pragma: no cover - metrics must never break requests
+            pass
 
     def _json_error_response(
         self,

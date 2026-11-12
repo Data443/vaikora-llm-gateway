@@ -12,6 +12,7 @@ from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from gateway.core.config import settings
+from gateway.integrations import llm_metrics
 from gateway.integrations.cache import cache
 
 
@@ -37,7 +38,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not settings.rate_limit_enabled:
             return await call_next(request)
 
-        category = self._classify_path(request.url.path)
+        category = self._classify_path(request.url.path, request.method)
         if category is None:
             return await call_next(request)
 
@@ -64,6 +65,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 limit,
             )
             headers["Retry-After"] = str(reset_seconds)
+            if category == "proxy" and request.method.upper() == "POST":
+                llm_metrics.record_blocked("rate_limit")
             return JSONResponse(
                 status_code=429,
                 content={
@@ -169,7 +172,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return self.audit_limit
         return self.proxy_limit
 
-    def _classify_path(self, path: str) -> Optional[str]:
+    def _classify_path(self, path: str, method: str = "GET") -> Optional[str]:
+        # /metrics is the in-cluster Prometheus scrape target, not proxy traffic. Exact path
+        # and GET/HEAD only: "/metrics/" and other methods fall through to the proxy route.
+        if path == "/metrics" and method.upper() in {"GET", "HEAD"}:
+            return None
+
         normalized = (path or "").rstrip("/") or "/"
 
         if normalized in {"/", "/health"}:

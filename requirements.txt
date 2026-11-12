@@ -26,6 +26,9 @@ python-jose[cryptography]>=3.4.0
 # PII detection
 regex==2024.11.6
 
+# Prometheus /metrics (LLM-execution metrics, multiprocess-aware)
+prometheus_client==0.26.0
+
 # OpenTelemetry (optional hooks)
 opentelemetry-api==1.28.2
 opentelemetry-sdk==1.28.2
